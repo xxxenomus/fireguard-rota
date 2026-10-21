@@ -10,6 +10,10 @@ Night-shift fireguard rota with clean time blocks and a jackpot roulette for lef
   go to the **🎰 jackpot roulette**, and each winner works one extra block.
   - ⚖️ *Fair mode*: only the people with the fewest jackpots so far go on the wheel.
   - 🎲 *Pure luck*: everyone is on the wheel every time.
+- **Clean rotas**: the app tries a few hundred variations and keeps the tidiest one: few long stretches,
+  no lone 30-minute pieces, proper breaks, and swaps on the hour where possible.
+- **Swap people**: in the timeline, tap a name and then another name in the same row to swap them
+  (two workers trade jobs, or someone on break takes over). Hours and totals update automatically.
 - **Share with crew**: sends the rota as text plus a live link. Coworkers open the link, tap their name and
   see what they're on now, when their next stretch is, and who takes over at the next swap.
   The rota sits inside the link itself, so no server or accounts are needed.

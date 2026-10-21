@@ -14,7 +14,7 @@ const toMin = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 6
 const fmt = min => { min = ((min % 1440) + 1440) % 1440; return String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0'); };
 const dur = min => { min = Math.round(min); const h = Math.floor(min / 60), m = min % 60; return h && m ? `${h}h ${m}m` : h ? `${h}h` : `${m}m`; };
 const shiftLen = (s, e) => ((toMin(e) - toMin(s) + 1440) % 1440) || 1440;
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const plural = (n, w, many = w + 's') => `${n} ${n === 1 ? w : many}`;
 
 function toast(msg) {
   const t = $('#toast');
@@ -42,6 +42,7 @@ function save() {
 
 let state = load();
 let showSetup = false;
+let pick = null; // first name tapped for a swap: { b: block start slot, id }
 let shared = null; // rota opened from a share link (read-only)
 
 const byId = id => state.people.find(p => p.id === id);
@@ -57,7 +58,7 @@ function calc() {
   const errors = [];
   if (!n) errors.push('Nobody is marked as in tonight.');
   if (!Number.isInteger(S)) errors.push(`Shift length (${dur(len)}) doesn't split into ${dur(st.slot)} blocks.`);
-  if (J > n) errors.push(`${plural(J, 'job')} but only ${plural(n, 'person')} in. Can't cover it.`);
+  if (J > n) errors.push(`${plural(J, 'job')} but only ${plural(n, 'person', 'people')} in. Can't cover it.`);
   const total = Number.isInteger(S) ? S * J : 0;
   const base = n ? Math.floor(total / n) : 0;
   const extra = n ? total % n : 0;
@@ -82,23 +83,36 @@ function pickWinners(present, extra, mode) {
 
 // Fill S time slots × J jobs so everyone hits their quota exactly.
 // Picking anyone whose remaining quota equals the remaining slots first keeps it always solvable.
-// After that it prefers keeping people on the same job until their stretch (B slots) is done,
-// then the most rested people.
-function schedule(ids, quotas, S, J, B) {
-  const rem = { ...quotas }, run = {}, post = {}, last = {}, tie = {};
-  ids.forEach(id => { run[id] = 0; post[id] = -1; last[id] = -1e9; tie[id] = rnd(); });
+// After that it prefers keeping people on the same job until their stretch is done,
+// then the most rested people. With jitter, stretch lengths and tie-breaks are shuffled a bit
+// so schedule() can try many variants and keep the tidiest. (Math.random is plenty here and much
+// faster than crypto; only the jackpot needs the fair one.)
+function scheduleOnce(ids, quotas, S, J, B, minLen, jitter) {
+  const rem = { ...quotas }, run = {}, post = {}, last = {}, tie = {}, len = {};
+  ids.forEach(id => {
+    run[id] = 0; post[id] = -1; last[id] = -1e9; tie[id] = Math.random();
+    len[id] = jitter ? Math.max(minLen, B + Math.floor(Math.random() * 3) - 1) : B;
+  });
   const grid = [];
   for (let t = 0; t < S; t++) {
     const R = S - t;
-    const cand = ids.filter(id => rem[id] > 0).map(id => ({
-      id,
-      must: rem[id] >= R ? 1 : 0,
-      cont: post[id] >= 0 && run[id] < B ? 1 : 0,
-      tired: post[id] >= 0 && run[id] >= B ? 1 : 0,
-    }));
+    const cand = ids.filter(id => rem[id] > 0).map(id => {
+      const on = post[id] >= 0;
+      // finishing someone's last bit now beats calling them back later for a tiny stretch
+      const cont = on && (run[id] < len[id] || rem[id] < minLen);
+      return {
+        id,
+        must: rem[id] >= R ? 1 : 0,
+        cont: cont ? 1 : 0,
+        tired: on && !cont ? 1 : 0,
+        // someone who only just went on break shouldn't be pulled straight back
+        fresh: !on && t - last[id] - 1 < minLen && last[id] >= 0 ? 1 : 0,
+        noise: jitter ? Math.random() * 1.5 : 0,
+      };
+    });
     cand.sort((x, y) =>
-      y.must - x.must || y.cont - x.cont || x.tired - y.tired ||
-      rem[y.id] - rem[x.id] || last[x.id] - last[y.id] || tie[x.id] - tie[y.id]);
+      y.must - x.must || y.cont - x.cont || x.tired - y.tired || x.fresh - y.fresh ||
+      (rem[y.id] + y.noise) - (rem[x.id] + x.noise) || last[x.id] - last[y.id] || tie[x.id] - tie[y.id]);
     const chosen = cand.slice(0, J).map(c => c.id);
     const row = new Array(J).fill(null);
     chosen.forEach(id => { if (post[id] >= 0 && row[post[id]] === null) row[post[id]] = id; });
@@ -111,6 +125,45 @@ function schedule(ids, quotas, S, J, B) {
     grid.push(row);
   }
   return grid;
+}
+
+// Lower is tidier: few, long stretches; no lone short stretches; real breaks; swaps on the hour.
+function scorePlan(grid, ids, B, minLen, slot, startMin) {
+  const S = grid.length;
+  let score = 0;
+  for (const id of ids) {
+    let t = 0, prevEnd = -1;
+    while (t < S) {
+      if (!grid[t].includes(id)) { t++; continue; }
+      const s = t;
+      let job = grid[t].indexOf(id);
+      while (t < S && grid[t].includes(id)) {
+        const k = grid[t].indexOf(id);
+        if (k !== job) { score += 6; job = k; }
+        t++;
+      }
+      score += 10;
+      if (t - s < minLen) score += 40;
+      if (t - s > B) score += (t - s - B) * 8;
+      if (prevEnd >= 0 && s - prevEnd < minLen) score += 20;
+      prevEnd = t;
+    }
+  }
+  for (let t = 1; t < S; t++) {
+    if (grid[t].join() !== grid[t - 1].join() && (startMin + t * slot) % 60) score += 3;
+  }
+  return score;
+}
+
+function schedule(ids, quotas, S, J, B, slot, startMin) {
+  const minLen = Math.max(1, Math.round(60 / slot));
+  let best = null, bestScore = Infinity;
+  for (let i = 0; i < 400; i++) {
+    const grid = scheduleOnce(ids, quotas, S, J, B, minLen, i > 0);
+    const sc = scorePlan(grid, ids, B, minLen, slot, startMin);
+    if (sc < bestScore) { best = grid; bestScore = sc; }
+  }
+  return best;
 }
 
 // Timestamp of the shift start: the one running now, else the next one.
@@ -134,7 +187,7 @@ function buildPlan(c, winners) {
     id: uid(), created: Date.now(), startTs: computeStartTs(st.start, c.len),
     start: st.start, end: st.end, len: c.len, slot: st.slot, jobs: c.J,
     jobNames: Array.from({ length: c.J }, (_, k) => (st.jobNames[k] || '').trim() || `Job ${k + 1}`),
-    quotas, winners, names, grid: schedule(ids, quotas, c.S, c.J, B),
+    quotas, winners, names, grid: schedule(ids, quotas, c.S, c.J, B, st.slot, toMin(st.start)),
   };
 }
 
@@ -147,6 +200,21 @@ function commit(plan, sign) {
     p.stats.nights = Math.max(0, p.stats.nights + sign);
     if (plan.winners.includes(id)) p.stats.jackpots = Math.max(0, p.stats.jackpots + sign);
   }
+}
+
+// Swap two people for slots [from, to). Works for two workers (they trade jobs)
+// or a worker and someone on break (hours move between them, totals follow).
+function swapInPlan(p, from, to, a, b) {
+  commit(p, -1);
+  for (let t = from; t < to; t++) {
+    const row = p.grid[t], ia = row.indexOf(a), ib = row.indexOf(b);
+    if (ia >= 0) row[ia] = b;
+    if (ib >= 0) row[ib] = a;
+  }
+  for (const id in p.quotas) p.quotas[id] = p.grid.reduce((n, row) => n + (row.includes(id) ? 1 : 0), 0);
+  p.edited = true;
+  commit(p, 1);
+  save();
 }
 
 function removePlan(id) {
@@ -167,6 +235,7 @@ function startBuild() {
     commit(plan, 1);
     state.history.unshift(plan);
     state.currentId = plan.id;
+    pick = null;
     showSetup = false;
     save();
     render();
@@ -328,7 +397,7 @@ function mathHTML(c) {
   if (!c.J) return `<div class="math">No jobs tonight. Everyone rests 😎</div>`;
   const exact = c.total * slot / c.n;
   let h = `<div class="math">${dur(c.len)} shift × ${plural(c.J, 'job')} = <b>${dur(c.total * slot)}</b> of watch<br>
-    ${plural(c.n, 'person')} → <b>${dur(c.base * slot)}</b> each`;
+    ${plural(c.n, 'person', 'people')} → <b>${dur(c.base * slot)}</b> each, about <b>${dur((c.S - c.base) * slot)}</b> of break`;
   if (c.extra) {
     h += `<br><span class="mut small">(an exact split would be ${dur(exact)}, so it's rounded to clean ${dur(slot)} blocks)</span>
       <br>🎰 <b>${c.extra}</b> leftover ${dur(slot)} block${c.extra > 1 ? 's' : ''}: the roulette decides who gets +${dur(slot)}`;
@@ -340,7 +409,7 @@ function planHTML(p, viewer) {
   const ids = Object.keys(p.names), tag = tagger(p), meId = meIdOf(p);
   const d = new Date(p.startTs).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
   let h = `<div class="card"><h2>Rota · ${esc(d)}</h2>
-    <div class="sub">${p.start}–${p.end} · ${plural(p.jobs, 'job')} · ${dur(p.slot)} blocks</div>`;
+    <div class="sub">${p.start}–${p.end} · ${plural(p.jobs, 'job')} · ${dur(p.slot)} blocks${p.edited ? ' · ✏️ edited' : ''}</div>`;
   if (!p.jobs) h += '<p class="now-big">No jobs tonight 😎</p></div>';
   else {
     h += '<div class="people">' + ids.map(id => {
@@ -352,13 +421,18 @@ function planHTML(p, viewer) {
           || '<span class="mut">Resting all night</span>'}</div></div>`;
     }).join('') + '</div></div>';
 
-    h += `<div class="card"><h2>Timeline</h2><div class="scroll"><table>
+    // in the planner every name in the timeline can be tapped to swap it with another in the same row
+    const cell = (b, id) => viewer ? tag(id)
+      : `<span class="pick ${pick && pick.b === b.start && pick.id === id ? 'picked' : ''}" data-act="pick" data-b="${b.start}" data-id="${id}">${tag(id)}</span>`;
+    h += `<div class="card"><h2>Timeline</h2>
+      ${viewer ? '' : `<div class="small mut" style="margin:-4px 0 8px">✏️ ${pick ? '<b>Now tap who to swap with (same row)</b>' : 'Tap two names in the same row to swap them'}</div>`}
+      <div class="scroll"><table>
       <tr><th>Time</th>${p.jobNames.map(n => `<th>${esc(n)}</th>`).join('')}<th>Break</th></tr>`;
     for (const b of blocks(p)) {
       const resting = ids.filter(id => !b.row.includes(id));
       h += `<tr data-s="${b.start}" data-e="${b.end}"><td class="time">${at(p, b.start)}<br>${at(p, b.end)}</td>
-        ${b.row.map(id => `<td>${tag(id)}</td>`).join('')}
-        <td class="rest">${resting.map(id => esc(p.names[id])).join(', ')}</td></tr>`;
+        ${b.row.map(id => `<td>${cell(b, id)}</td>`).join('')}
+        <td class="rest">${viewer ? resting.map(id => esc(p.names[id])).join(', ') : resting.map(id => cell(b, id)).join(' ')}</td></tr>`;
     }
     h += '</table></div></div>';
   }
@@ -628,11 +702,30 @@ document.addEventListener('click', e => {
     }
     case 'present': if (p) { p.present = !p.present; save(); render(); } break;
     case 'build': startBuild(); break;
-    case 'newrota': showSetup = true; renderTonight(); window.scrollTo(0, 0); break;
+    case 'newrota': showSetup = true; pick = null; renderTonight(); window.scrollTo(0, 0); break;
     case 'cancelsetup': showSetup = false; renderTonight(); break;
     case 'reroll':
       if (confirm('Throw this rota away and spin again?')) { removePlan(state.currentId); startBuild(); }
       break;
+    case 'pick': {
+      const plan = current(), blk = Number(b.dataset.b);
+      if (!plan) break;
+      if (!pick || pick.b !== blk) pick = { b: blk, id };
+      else if (pick.id === id) pick = null;
+      else {
+        const bl = blocks(plan).find(x => x.start === blk);
+        if (!bl.row.includes(pick.id) && !bl.row.includes(id)) { toast('Both are on break, nothing to swap'); pick = null; }
+        else {
+          const names = `${plan.names[pick.id]} ↔ ${plan.names[id]}`;
+          swapInPlan(plan, bl.start, bl.end, pick.id, id);
+          pick = null;
+          renderCrew(); renderHistory();
+          toast(`Swapped ${names} ✅ Share again so the crew sees it`);
+        }
+      }
+      renderTonight();
+      break;
+    }
     case 'share': shareRota(current()); break;
     case 'copy': copyText(planText(current())); break;
     case 'rename': {

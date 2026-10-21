@@ -126,3 +126,8 @@ nav button.active { color: var(--acc); }
   opacity: 0; pointer-events: none; transition: .25s; z-index: 30; max-width: 90vw; text-align: center;
 }
 #toast.show { opacity: 1; transform: translateX(-50%); }
+
+.pick { display: inline-block; border-radius: 10px; padding: 2px; margin: 1px 0; }
+.pick.picked { outline: 2px dashed #fff; animation: wiggle .5s ease-in-out infinite alternate; }
+@keyframes wiggle { from { transform: rotate(-2deg); } to { transform: rotate(2deg); } }
+td.rest .tag { opacity: .75; font-weight: 600; }
