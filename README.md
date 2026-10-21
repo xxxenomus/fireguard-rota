@@ -19,6 +19,9 @@ Live at **https://xxxenomus.github.io/fireguard-rota/**
   - 🎲 *Pure luck*: random every time.
 - **Everyone tonight**: for each person, where they're working, how much 🔨 work and ☕ break they
   have, and how much is still to do.
+- **Own worksite**: everyone's first site of the night becomes their own (📍 on their card). After a
+  break they go back to it, and whoever was covering hands it back. With more people than sites, a
+  couple of people still have to float between sites.
 - **Something changed?** These buttons work any time during the shift:
   - ➕ New job (now or later, optionally with an end time), ⛔ job ended, ▶ job back on, ✏️ edit times
   - ⏸ someone's away for a bit, 🏠 gone home, 👋 back / arrived

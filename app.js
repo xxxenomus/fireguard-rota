@@ -10,7 +10,7 @@ const DEV_KEY = 'fireguard-device';
 const DB = 'https://fireguard-rota-caf41748-default-rtdb.europe-west1.firebasedatabase.app';
 const LEGACY_RELAY = 'https://ntfy.sh/';
 const COLORS = ['#ff6b35', '#f7c548', '#3ec1d3', '#a06cd5', '#58d68d', '#ff4f79', '#4d96ff', '#ffa94d'];
-const DEFAULTS = { start: '19:00', end: '07:00', jobs: 3, slot: 60, block: 120, mode: 'fair', jobNames: ['', '', '', '', ''] };
+const DEFAULTS = { start: '19:00', end: '07:00', jobs: 3, slot: 60, block: 60, mode: 'fair', jobNames: ['', '', '', '', ''] };
 
 const rnd = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
 const uid = () => 'p' + Math.random().toString(36).slice(2, 9);
@@ -46,6 +46,11 @@ function fixDoc(d) {
   if (!d.settings.slot2) {
     if (d.settings.slot === 30) d.settings.slot = 60;
     d.settings.slot2 = true;
+  }
+  // and for swaps: every 2h used to be the default, now it is every 1h
+  if (!d.settings.block2) {
+    if (d.settings.block === 120) d.settings.block = 60;
+    d.settings.block2 = true;
   }
   d.people = d.people || [];
   d.log = d.log || [];
@@ -190,14 +195,17 @@ function replan(n, cut, prev) {
 function fillOnce(c, jitter) {
   const g = c.base.map(r => r.slice());
   const rem = { ...c.rem }, capLeft = { ...c.cap }, run = {}, post = {}, last = {}, tie = {}, len = {};
+  const home = {}; // each person's own worksite: the first one they work tonight
   c.ids.forEach(id => {
     run[id] = 0; post[id] = -1; last[id] = -1e9; tie[id] = Math.random();
     len[id] = jitter ? Math.max(c.minLen, c.B + Math.floor(Math.random() * 3) - 1) : c.B;
   });
   const step = (t, row) => c.ids.forEach(id => {
     const k = row.indexOf(id);
-    if (k >= 0) { run[id] = post[id] >= 0 ? run[id] + 1 : 1; post[id] = k; last[id] = t; }
-    else { run[id] = 0; post[id] = -1; }
+    if (k >= 0) {
+      run[id] = post[id] >= 0 ? run[id] + 1 : 1; post[id] = k; last[id] = t;
+      if (home[id] === undefined || t >= c.n.jobs[home[id]].to) home[id] = k;
+    } else { run[id] = 0; post[id] = -1; }
   });
   for (let t = 0; t < c.cut; t++) step(t, g[t]);
 
@@ -223,8 +231,22 @@ function fillOnce(c, jitter) {
         y.must - x.must || y.has - x.has || y.cont - x.cont || x.tired - y.tired || x.fresh - y.fresh ||
         (rem[y.id] + y.noise) - (rem[x.id] + x.noise) || last[x.id] - last[y.id] || tie[x.id] - tie[y.id]);
       const chosen = cand.slice(0, f.need).map(x => x.id);
-      chosen.forEach(id => { if (post[id] >= 0 && f.jobs.includes(post[id]) && row[post[id]] === null) row[post[id]] = id; });
-      chosen.forEach(id => { if (!row.includes(id)) row[f.jobs.find(k => row[k] === null)] = id; });
+      // someone covering another person's site hands it back when its regular is rested and in
+      const back = chosen.filter(x => post[x] < 0 && home[x] !== undefined && t - last[x] - 1 >= c.minLen);
+      const yields = id => post[id] !== home[id] && back.some(x => home[x] === post[id]);
+      // people mid-stretch stay put, people coming back go to their own site if it's free,
+      // and anyone else takes the free site that the fewest people call home
+      chosen.forEach(id => { if (post[id] >= 0 && !yields(id) && f.jobs.includes(post[id]) && row[post[id]] === null) row[post[id]] = id; });
+      chosen.forEach(id => {
+        const h = home[id];
+        if (!row.includes(id) && h !== undefined && f.jobs.includes(h) && row[h] === null) row[h] = id;
+      });
+      const claims = k => c.ids.filter(x => home[x] === k && !row.includes(x)).length;
+      chosen.forEach(id => {
+        if (row.includes(id)) return;
+        const free = f.jobs.filter(k => row[k] === null).sort((x, y) => claims(x) - claims(y) || x - y);
+        row[free[0]] = id;
+      });
       chosen.forEach(id => { rem[id]--; });
       f.av.forEach(id => { capLeft[id]--; });
     }
@@ -233,15 +255,18 @@ function fillOnce(c, jitter) {
   return g;
 }
 
-// Lower is better: fair shares first, then tidy stretches and breaks, then stability.
+// Lower is better: fair shares first, then tidy stretches and breaks, own worksite, then stability.
 function scoreNight(g, c) {
   let score = 0;
   for (const id of c.ids) {
-    let t = 0, prevEnd = -1, got = 0;
+    let t = 0, prevEnd = -1, got = 0, home;
     while (t < c.S) {
       if (!g[t].includes(id)) { t++; continue; }
       const s = t;
       let job = g[t].indexOf(id);
+      // starting a stretch away from your own site while it is running costs a bit
+      if (home === undefined || s >= c.n.jobs[home].to) home = job;
+      else if (job !== home && jobOn(c.n.jobs[home], s)) score += 10;
       while (t < c.S && g[t].includes(id)) {
         const k = g[t].indexOf(id);
         if (k !== job) { score += 6; job = k; }
@@ -250,7 +275,8 @@ function scoreNight(g, c) {
       }
       score += 10;
       if (t - s < c.minLen) score += 40;
-      if (t - s > c.B) score += (t - s - c.B) * 8;
+      // going past the swap time gets costlier the longer it runs, so 2h is fine but 6h isn't
+      if (t - s > c.B) { const o = t - s - c.B; score += 8 * o + 6 * o * o; }
       if (prevEnd >= 0 && s - prevEnd < c.minLen) score += 20;
       prevEnd = t;
     }
@@ -689,8 +715,12 @@ function nightHTML(n) {
     let todo = 0;
     for (let t = nowSlot; t < n.S; t++) if (n.grid[t].includes(p.id)) todo++;
     const status = personStatus(n, p, cut);
+    // their main site: where they spend most of their time tonight
+    const perJob = n.jobs.map((j, k) => segs.filter(s => s.job === k).reduce((a, s) => a + s.end - s.start, 0));
+    const main = work && n.jobs.length > 1 ? perJob.indexOf(Math.max(...perJob)) : -1;
     return `<div class="pp ${p.id === me ? 'me' : ''}">
       <div class="pp-top">${tag(p.id)}${ex[p.id] ? ` <span class="jack">🎰 +${dur(ex[p.id] * n.slot)}</span>` : ''}</div>
+      ${main >= 0 ? `<div class="small" style="margin-bottom:4px">📍 ${esc(n.jobs[main].name)}</div>` : ''}
       <div class="wt">🔨 <b>${dur(work * n.slot)}</b> work · ☕ <b>${dur(brk * n.slot)}</b> break
         ${minsIn(n) > 0 && nowSlot < n.S ? `<br><span class="mut">still to do: ${dur(todo * n.slot)}</span>` : ''}</div>
       ${status ? `<div class="small mut">${status}</div>` : ''}
