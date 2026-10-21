@@ -10,7 +10,7 @@ const DEV_KEY = 'fireguard-device';
 const DB = 'https://fireguard-rota-caf41748-default-rtdb.europe-west1.firebasedatabase.app';
 const LEGACY_RELAY = 'https://ntfy.sh/';
 const COLORS = ['#ff6b35', '#f7c548', '#3ec1d3', '#a06cd5', '#58d68d', '#ff4f79', '#4d96ff', '#ffa94d'];
-const DEFAULTS = { start: '19:00', end: '07:00', jobs: 3, slot: 30, block: 120, mode: 'fair', jobNames: ['', '', '', '', ''] };
+const DEFAULTS = { start: '19:00', end: '07:00', jobs: 3, slot: 60, block: 120, mode: 'fair', jobNames: ['', '', '', '', ''] };
 
 const rnd = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
 const uid = () => 'p' + Math.random().toString(36).slice(2, 9);
@@ -41,6 +41,11 @@ function fixDoc(d) {
   if (!d.settings.times2) {
     if (d.settings.start === '22:00' && d.settings.end === '06:00') Object.assign(d.settings, { start: '19:00', end: '07:00' });
     d.settings.times2 = true;
+  }
+  // same for time blocks: 30 min used to be the default, now it is 1 hour
+  if (!d.settings.slot2) {
+    if (d.settings.slot === 30) d.settings.slot = 60;
+    d.settings.slot2 = true;
   }
   d.people = d.people || [];
   d.log = d.log || [];
