@@ -1,0 +1,12 @@
+{
+  "name": "Fireguard Rota",
+  "short_name": "Fireguard",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#121318",
+  "theme_color": "#121318",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
