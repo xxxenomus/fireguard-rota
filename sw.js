@@ -1,6 +1,6 @@
 // Offline support: always try the network first so everyone gets updates straight away,
 // and fall back to the saved copy when offline or if the network takes over 3 seconds.
-const CACHE = 'fireguard-v7';
+const CACHE = 'fireguard-v8';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

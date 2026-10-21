@@ -88,12 +88,10 @@ function commit(redraw = true) {
 
 let doc = loadDoc();
 let showSetup = false;
-let pick = null; // first name tapped for a swap: { b: block start slot, id }
 const device = localStorage.getItem(DEV_KEY) || (() => { const d = uid(); localStorage.setItem(DEV_KEY, d); return d; })();
 
 const byId = id => doc.people.find(p => p.id === id);
 const meId = () => localStorage.getItem(ME_KEY);
-const meName = () => byId(meId())?.name || 'Someone';
 const liveNight = () => (doc.night && !doc.night.closed ? doc.night : null);
 
 // ---------- night helpers ----------
@@ -307,11 +305,6 @@ function calcSetup() {
   return { present, len, S, J, n, total, base, extra, errors, warns };
 }
 
-function addFeed(n, what) {
-  n.feed.unshift({ ts: Date.now(), who: meName(), what });
-  n.feed = n.feed.slice(0, 25);
-}
-
 // Saves a finished night into everyone's totals and the history.
 function closeNight() {
   const n = liveNight();
@@ -362,27 +355,23 @@ function createNight(line) {
     id: uid(), startTs: computeStartTs(st.start, len), start: st.start, end: st.end, slot: st.slot, block: st.block, S,
     people: doc.people.filter(p => p.present).map(p => ({ id: p.id, name: p.name, from: 0, to: S, away: [] })),
     jobs: Array.from({ length: st.jobs }, (_, k) => ({ id: uid(), name: (st.jobNames[k] || '').trim() || `Job ${k + 1}`, from: 0, to: S })),
-    line, grid: [], feed: [], closed: false,
+    line, grid: [], closed: false,
   };
   replan(n, 0, null);
-  addFeed(n, `started the night. 🎰 ${nameOf(n, line[0])} is first in line`);
   doc.night = n;
   showSetup = false;
-  pick = null;
   commit();
   window.scrollTo(0, 0);
 }
 
 // A live change: apply it, then recalculate everything from the current block on.
-function editNight(what, fn) {
+function editNight(fn) {
   const n = liveNight();
   if (!n) return;
   const cut = cutNow(n);
   if (cut >= n.S) return toast('This shift is already over');
   if (fn(n, cut) === false) return;
   replan(n, cut, n.grid.map(r => r.slice()));
-  addFeed(n, what);
-  pick = null;
   commit();
   toast(`Rota recalculated from ${at(n, cut)} ✅`);
 }
@@ -393,24 +382,6 @@ function removeJob(n, k) {
   n.grid.forEach(r => r.splice(k, 1));
 }
 
-// Swap two people for slots [from, to): two workers trade jobs, or someone on break takes over.
-function swapInPlan(n, from, to, a, b) {
-  for (let t = from; t < to; t++) {
-    const row = n.grid[t], ia = row.indexOf(a), ib = row.indexOf(b);
-    if (ia >= 0) row[ia] = b;
-    if (ib >= 0) row[ib] = a;
-  }
-}
-
-function blocks(n) {
-  const out = [];
-  n.grid.forEach((row, t) => {
-    const key = rowKey(n, t), L = out[out.length - 1];
-    if (L && L.key === key) L.end = t + 1;
-    else out.push({ key, row, start: t, end: t + 1 });
-  });
-  return out;
-}
 function personSegs(n, id) {
   const segs = [];
   n.grid.forEach((row, t) => {
@@ -442,8 +413,7 @@ function planText(n) {
     s += segs.length ? segs.map(x => `${at(n, x.start)}–${at(n, x.end)} ${n.jobs[x.job].name}`).join(', ') : 'no watch';
     s += '\n';
   }
-  s += `\n🎰 Extra-time line: ${n.line.filter(id => np(n, id)).map(id => nameOf(n, id)).join(' → ')}\n`;
-  return s + `\n👉 Live rota: ${crewUrl()}`;
+  return s + `\n👉 ${crewUrl()}`;
 }
 
 async function copyText(text) {
@@ -629,7 +599,6 @@ function setupHTML() {
     .map(t => `<option ${t === v ? 'selected' : ''}>${t}</option>`).join('');
   const chips = (key, opts) => `<div class="chips">${opts.map(([v, l]) =>
     `<button class="chip ${st[key] === v ? 'on' : ''}" data-act="set" data-key="${key}" data-val="${v}">${l}</button>`).join('')}</div>`;
-  const n = liveNight();
 
   let h = `<div class="card"><h2>Who's in tonight?</h2><div class="chips">${doc.people.map(p =>
     `<button class="chip ${p.present ? 'on' : ''}" data-act="present" data-id="${p.id}">${esc(p.name)}</button>`).join('')}</div></div>`;
@@ -639,141 +608,75 @@ function setupHTML() {
       <div><label class="row">Start</label><select data-set="start">${times(st.start)}</select></div>
       <div><label class="row">End</label><select data-set="end">${times(st.end)}</select></div>
     </div>
-    <label class="row">Jobs at the start of the shift <span class="small">(you can add or end jobs later)</span></label>
+    <label class="row">Jobs</label>
     ${chips('jobs', [0, 1, 2, 3, 4, 5].map(k => [k, k]))}
-    ${st.jobs ? `<label class="row">Job names (optional)</label><div class="jobnames">${Array.from({ length: st.jobs }, (_, k) =>
+    ${st.jobs ? `<div class="jobnames" style="margin-top:8px">${Array.from({ length: st.jobs }, (_, k) =>
       `<input type="text" data-job="${k}" placeholder="Job ${k + 1}" maxlength="18" value="${esc(st.jobNames[k] || '')}">`).join('')}</div>` : ''}
     <label class="row">Time blocks</label>
     ${chips('slot', [[30, '30 min'], [60, '1 hour']])}
     <label class="row">Swap people every</label>
     ${chips('block', [[60, '1h'], [120, '2h'], [180, '3h'], [240, '4h']])}
-    <label class="row">Jackpot mode</label>
+    <label class="row">Jackpot</label>
     ${chips('mode', [['fair', '⚖️ Fair'], ['luck', '🎲 Pure luck']])}
-    <div class="small mut" style="margin-top:6px">${st.mode === 'fair'
-      ? 'Fair: whoever has had the fewest jackpots so far goes on the wheel.'
-      : 'Pure luck: everyone is on the wheel every time.'}</div>
     ${mathHTML(c)}
-    ${n ? '<div class="small mut" style="margin-top:10px">Starting a new night saves the current night\'s hours into everyone\'s totals.</div>' : ''}
-    <button class="big" data-act="start" ${c.errors.length ? 'disabled' : ''}>🎰 Spin tonight's jackpot & start</button>
+    <button class="big" data-act="start" ${c.errors.length ? 'disabled' : ''}>🎰 Spin & start</button>
   </div>`;
   return h;
 }
 
 function mathHTML(c) {
-  const slot = doc.settings.slot;
-  if (c.errors.length) return `<div class="math">${c.errors.map(e => `<div class="err">⚠️ ${esc(e)}</div>`).join('')}</div>`;
-  let h = '<div class="math">';
-  if (!c.J) h += 'No jobs at the start. Everyone rests until a job comes in 😎';
-  else {
-    h += `${dur(c.len)} shift × ${plural(Math.min(c.J, c.n), 'job')} = <b>${dur(c.total * slot)}</b> of watch<br>
-      ${plural(c.n, 'person', 'people')} → <b>${dur(c.base * slot)}</b> each, about <b>${dur((c.S - c.base) * slot)}</b> of break`;
-    if (c.extra) {
-      h += `<br><span class="mut small">(an exact split would be ${dur(c.total * slot / c.n)}, so it's rounded to clean ${dur(slot)} blocks)</span>
-        <br>🎰 ${c.extra} leftover ${dur(slot)} block${c.extra > 1 ? 's' : ''} → the first ${c.extra > 1 ? c.extra + ' people' : 'person'} in the jackpot line get +${dur(slot)}`;
-    } else h += '<br>Splits perfectly right now 👌';
+  const slot = doc.settings.slot, lines = c.errors.concat(c.warns).map(e => `<div class="err">⚠️ ${esc(e)}</div>`);
+  if (!c.errors.length && c.J) {
+    lines.unshift(`<b>${dur(c.base * slot)}</b> work · <b>${dur((c.S - c.base) * slot)}</b> break each` +
+      (c.extra ? `<br>🎰 +${dur(slot)} for ${c.extra > 1 ? c.extra + ' people' : 'the jackpot'}` : ''));
   }
-  h += c.warns.map(w => `<div class="err">⚠️ ${esc(w)}</div>`).join('');
-  return h + `<div class="small mut" style="margin-top:8px">The jackpot is spun every night, even with 0 or 1 jobs. If a job shows up or ends later, any leftover time goes to the front of the line first.</div></div>`;
+  return lines.length ? `<div class="math">${lines.join('')}</div>` : '';
 }
 
 function whoAmIHTML() {
-  return `<div class="card"><h2>👤 Who are you on this phone?</h2>
-    <div class="chips">${doc.people.map(p => `<button class="chip" data-act="setme" data-id="${p.id}">${esc(p.name)}</button>`).join('')}</div>
-    <div class="small mut" style="margin-top:8px">So the app can show your own times, and so changes show who made them.</div></div>`;
+  return `<div class="card"><h2>👤 Who are you?</h2>
+    <div class="chips">${doc.people.map(p => `<button class="chip" data-act="setme" data-id="${p.id}">${esc(p.name)}</button>`).join('')}</div></div>`;
 }
 
 function jobStatus(n, j, cut) {
   if (j.to <= j.from) return 'cancelled';
   if (cut >= j.to) return `ended ${at(n, j.to)}`;
-  if (cut < j.from) return `starts ${at(n, j.from)}${j.to < n.S ? ' – ' + at(n, j.to) : ''}`;
-  return `running${j.from > 0 ? ' since ' + at(n, j.from) : ''}${j.to < n.S ? ' until ' + at(n, j.to) : ''}`;
-}
-function personStatus(n, p, cut) {
-  if (cut >= p.to) return `🏠 left ${at(n, p.to)}`;
-  if (cut < p.from) return `arrives ${at(n, p.from)}`;
-  const away = p.away.find(([a, b]) => cut >= a && cut < b);
-  const bits = [];
-  if (away) bits.push(`⏸ away until ${at(n, away[1])}`);
-  if (p.from > 0) bits.push(`arrived ${at(n, p.from)}`);
-  if (p.to < n.S) bits.push(`leaves ${at(n, p.to)}`);
-  return bits.join(' · ');
+  if (cut < j.from) return `${at(n, j.from)}–${at(n, j.to)}`;
+  return j.from > 0 || j.to < n.S ? `${at(n, j.from)}–${at(n, j.to)}` : '';
 }
 
 function nightHTML(n) {
   const cut = cutNow(n), tag = tagger(n), tot = totals(n), ex = extras(n), me = meId();
-  const d = new Date(n.startTs).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
-  const running = n.jobs.filter(j => j.to > j.from).length;
+  const d = new Date(n.startTs).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   const nowSlot = clamp(Math.ceil(minsIn(n) / n.slot), 0, n.S);
-  let h = `<div class="card"><h2>Tonight · ${esc(d)}</h2>
-    <div class="sub">${n.start}–${n.end} · ${plural(running, 'job')} · ${dur(n.slot)} blocks</div>
-    <div class="line">🎰 <b>Extra-time line:</b> ${n.line.filter(id => np(n, id)).map((id, i) => `${i + 1}. ${tag(id)}`).join(' ')}</div>
-    <div class="small mut">Leftover time, now or after a change, goes to the front of the line first.</div></div>`;
 
   // who works where, and how much work and break everyone has
-  h += '<div class="card"><h2>Everyone tonight</h2><div class="people">' + n.people.map(p => {
+  let h = `<div class="card"><h2>${esc(d)} · ${n.start}–${n.end}</h2><div class="people">` + n.people.map(p => {
     const segs = personSegs(n, p.id), work = tot[p.id], brk = availSlots(n, p) - work;
     let todo = 0;
     for (let t = nowSlot; t < n.S; t++) if (n.grid[t].includes(p.id)) todo++;
-    const status = personStatus(n, p, cut);
     // their main site: where they spend most of their time tonight
     const perJob = n.jobs.map((j, k) => segs.filter(s => s.job === k).reduce((a, s) => a + s.end - s.start, 0));
     const main = work && n.jobs.length > 1 ? perJob.indexOf(Math.max(...perJob)) : -1;
     return `<div class="pp ${p.id === me ? 'me' : ''}">
       <div class="pp-top">${tag(p.id)}${ex[p.id] ? ` <span class="jack">🎰 +${dur(ex[p.id] * n.slot)}</span>` : ''}</div>
       ${main >= 0 ? `<div class="small" style="margin-bottom:4px">📍 ${esc(n.jobs[main].name)}</div>` : ''}
-      <div class="wt">🔨 <b>${dur(work * n.slot)}</b> work · ☕ <b>${dur(brk * n.slot)}</b> break
-        ${minsIn(n) > 0 && nowSlot < n.S ? `<br><span class="mut">still to do: ${dur(todo * n.slot)}</span>` : ''}</div>
-      ${status ? `<div class="small mut">${status}</div>` : ''}
+      <div class="wt">🔨 <b>${dur(work * n.slot)}</b> · ☕ <b>${dur(brk * n.slot)}</b>
+        ${minsIn(n) > 0 && nowSlot < n.S ? `<br><span class="mut">left: ${dur(todo * n.slot)}</span>` : ''}</div>
       <div class="pp-segs">${segs.map(s => `${at(n, s.start)}–${at(n, s.end)} <span class="mut">${esc(n.jobs[s.job].name)}</span>`).join('<br>')
-        || '<span class="mut">No watch tonight</span>'}</div></div>`;
+        || '<span class="mut">No watch</span>'}</div></div>`;
   }).join('') + '</div></div>';
 
-  // live changes
-  const others = doc.people.filter(p => !np(n, p.id));
-  h += `<div class="card"><h2>Something changed?</h2>
-    <div class="small mut">Changes apply from <b>${at(n, cut)}</b> and the rest of the night is recalculated for everyone. Earlier times stay as they were.</div>
-    <h3>Jobs</h3>
+  h += `<div class="card"><h2>Jobs</h2>
     ${n.jobs.map(j => `<div class="lrow"><div><b>${esc(j.name)}</b> <span class="mut small">${jobStatus(n, j, cut)}</span></div>
       <div class="lbtns">${j.to > cut ? `<button class="sbtn" data-act="jobend" data-j="${j.id}">⛔ Ended</button>`
         : `<button class="sbtn" data-act="jobresume" data-j="${j.id}">▶ Back on</button>`}
-      <button class="sbtn" data-act="jobedit" data-j="${j.id}">✏️</button></div></div>`).join('') || '<p class="mut small">No jobs right now.</p>'}
-    <button class="btn" style="margin-top:8px" data-act="jobadd">➕ New job</button>
-    <h3>People</h3>
-    ${n.people.map(p => {
-      const gone = cut >= p.to, away = p.away.some(([a, b]) => cut >= a && cut < b), notYet = cut < p.from;
-      return `<div class="lrow"><div><b>${esc(p.name)}</b> <span class="mut small">${personStatus(n, p, cut)}</span></div><div class="lbtns">
-        ${gone || away ? `<button class="sbtn" data-act="back" data-id="${p.id}">👋 Back</button>`
-          : notYet ? '' : `<button class="sbtn" data-act="away" data-id="${p.id}">⏸ Away</button><button class="sbtn" data-act="leave" data-id="${p.id}">🏠 Gone</button>`}
-        <button class="sbtn" data-act="personedit" data-id="${p.id}">✏️</button></div></div>`;
-    }).join('')}
-    ${others.length ? `<div class="chips" style="margin-top:8px">${others.map(p =>
-      `<button class="sbtn" data-act="arrive" data-id="${p.id}">👋 ${esc(p.name)} is here</button>`).join('')}</div>` : ''}
-  </div>`;
-
-  // timeline; tap two names in the same row to swap them
-  h += `<div class="card"><h2>Timeline</h2>
-    <div class="small mut" style="margin:-4px 0 8px">✏️ ${pick ? '<b>Now tap who to swap with (same row)</b>' : 'Tap two names in the same row to swap them'}</div>
-    <div class="scroll"><table><tr><th>Time</th>${n.jobs.map(j => `<th>${esc(j.name)}${j.from > 0 || j.to < n.S
-      ? `<br><span class="small">${j.to > j.from ? at(n, j.from) + '–' + at(n, j.to) : 'cancelled'}</span>` : ''}</th>`).join('')}<th>Break</th></tr>`;
-  const cell = (b, id) => `<span class="pick ${pick && pick.b === b.start && pick.id === id ? 'picked' : ''}" data-act="pick" data-b="${b.start}" data-id="${id}">${tag(id)}</span>`;
-  for (const b of blocks(n)) {
-    const resting = n.people.filter(p => isIn(p, b.start) && !b.row.includes(p.id));
-    h += `<tr data-s="${b.start}" data-e="${b.end}"><td class="time">${at(n, b.start)}<br>${at(n, b.end)}</td>
-      ${b.row.map((id, k) => `<td>${id ? cell(b, id) : !jobOn(n.jobs[k], b.start) ? '<span class="off">·</span>'
-        : b.start >= cut ? '<span class="warn">⚠️ nobody</span>' : '<span class="mut">—</span>'}</td>`).join('')}
-      <td class="rest">${resting.map(p => cell(b, p.id)).join(' ')}</td></tr>`;
-  }
-  h += '</table></div></div>';
-
-  if (n.feed.length) {
-    h += `<div class="card"><h2>Changes</h2><div class="feed">${n.feed.slice(0, 10).map(f =>
-      `<div><span class="mut">${fmt(new Date(f.ts).getHours() * 60 + new Date(f.ts).getMinutes())}</span> <b>${esc(f.who)}</b> ${esc(f.what)}</div>`).join('')}</div></div>`;
-  }
+      <button class="sbtn" data-act="jobedit" data-j="${j.id}">✏️</button></div></div>`).join('')}
+    <button class="btn" style="margin-top:8px" data-act="jobadd">➕ New job</button></div>`;
 
   h += `<div class="card"><div class="actions">
       <button class="btn acc" data-act="sharetext">📤 Send rota</button>
-      <button class="btn" data-act="invite">🔗 Invite crew</button>
-      <button class="btn" data-act="respin">🎲 Re-spin jackpot</button>
+      <button class="btn" data-act="respin">🎲 Re-spin</button>
       <button class="btn" data-act="newnight">➕ New night</button>
     </div>
     <button class="link" data-act="cancelnight">Cancel tonight</button></div>`;
@@ -784,9 +687,8 @@ function renderTonight() {
   const el = $('#tab-tonight'), n = liveNight();
   if (!doc.people.length) {
     el.innerHTML = sync.joined
-      ? `<div class="card center"><p>⏳ Loading your crew…</p><p class="small mut">If this stays empty, ask a coworker to open the app once so it syncs.</p></div>`
-      : `<div class="card center"><p>👋 First, add your crew.</p>
-        <button class="big" data-act="tab" data-tab="crew">Add people</button></div>`;
+      ? '<div class="card center"><p>⏳ Loading your crew…</p></div>'
+      : `<div class="card center"><button class="big" data-act="tab" data-tab="crew">👷 Add your crew</button></div>`;
     return;
   }
   let h = meId() && byId(meId()) ? '' : whoAmIHTML();
@@ -799,24 +701,19 @@ function renderTonight() {
 function myLine(n, id, t) {
   const segs = personSegs(n, id), m = x => x * n.slot;
   const cur = segs.find(s => t >= m(s.start) && t < m(s.end));
-  if (cur) return `👉 <b>You're on ${esc(n.jobs[cur.job].name)}</b> until ${at(n, cur.end)} (${dur(Math.ceil(m(cur.end) - t))} left)`;
+  if (cur) return `👉 <b>You're on ${esc(n.jobs[cur.job].name)}</b> until ${at(n, cur.end)}`;
   const nx = segs.find(s => m(s.start) > t);
-  if (nx) return `👉 ${t >= 0 ? "You're on break. " : ''}Your next stretch: <b>${at(n, nx.start)}</b> on ${esc(n.jobs[nx.job].name)} (in ${dur(Math.ceil(m(nx.start) - t))})`;
-  return segs.length ? "👉 You're done for the night 🎉" : '👉 No watch for you tonight 😎';
+  if (nx) return `👉 Next: <b>${at(n, nx.start)}</b> on ${esc(n.jobs[nx.job].name)} (in ${dur(Math.ceil(m(nx.start) - t))})`;
+  return segs.length ? "👉 You're done for the night 🎉" : '👉 No watch for you tonight';
 }
 
 function renderNow() {
   const n = !showSetup && liveNight(), box = $('#now');
   if (!n || !box) return;
   const t = minsIn(n), len = n.S * n.slot, tag = tagger(n);
-  document.querySelectorAll('#tab-tonight tr[data-s]').forEach(tr => {
-    const a = +tr.dataset.s * n.slot, b = +tr.dataset.e * n.slot;
-    tr.classList.toggle('cur', t >= a && t < b);
-    tr.classList.toggle('past', t >= b);
-  });
   const me = meId(), mine = me && np(n, me) ? `<div class="mine">${myLine(n, me, t)}</div>` : '';
   if (t >= len) {
-    box.innerHTML = `<div class="card now"><div class="now-big">Shift done ✅</div><div class="mut">Good work, go sleep 😴</div></div>`;
+    box.innerHTML = '<div class="card now"><div class="now-big">Shift done ✅</div></div>';
     return;
   }
   if (t < 0) {
@@ -827,37 +724,32 @@ function renderNow() {
   const active = n.jobs.map((j, k) => k).filter(k => jobOn(n.jobs[k], s));
   let u = s + 1;
   while (u < n.S && rowKey(n, u) === key) u++;
-  const left = dur(Math.ceil(u * n.slot - t));
   let h = '<div class="card now"><h2>🟢 Right now</h2>';
   h += active.length
     ? active.map(k => `<div class="nowrow"><span class="mut">${esc(n.jobs[k].name)}</span>${row[k] ? tag(row[k]) : '<span class="warn">⚠️ nobody</span>'}</div>`).join('')
-    : '<div class="nowrow">No jobs running right now 😎</div>';
+    : '<div class="nowrow">No jobs running</div>';
   const resting = n.people.filter(p => isIn(p, s) && !row.includes(p.id));
-  if (resting.length) h += `<div class="small mut" style="margin-top:6px">☕ On break: ${resting.map(p => esc(p.name)).join(', ')}</div>`;
+  if (resting.length) h += `<div class="small mut" style="margin-top:6px">☕ ${resting.map(p => esc(p.name)).join(', ')}</div>`;
   if (u < n.S) {
     const nr = n.grid[u], ch = [];
     n.jobs.forEach((j, k) => {
       const on0 = jobOn(j, s), on1 = jobOn(j, u);
       if (on0 && !on1) ch.push(`${esc(j.name)} ends`);
       else if (!on0 && on1) ch.push(`${esc(j.name)} starts: ${nr[k] ? tag(nr[k]) : '⚠️ nobody'}`);
-      else if (on1 && nr[k] !== row[k]) ch.push(`${nr[k] ? tag(nr[k]) : '⚠️ nobody'} takes over ${esc(j.name)}`);
+      else if (on1 && nr[k] !== row[k]) ch.push(`${nr[k] ? tag(nr[k]) : '⚠️ nobody'} → ${esc(j.name)}`);
     });
-    h += `<div class="next">⏭ Next change <b>${at(n, u)}</b> (in ${left})${ch.length ? '<br>' + ch.join('<br>') : ''}</div>`;
-  } else {
-    h += `<div class="next">🏁 Last stretch. Shift ends ${n.end} (in ${left})</div>`;
+    h += `<div class="next">⏭ <b>${at(n, u)}</b> (in ${dur(Math.ceil(u * n.slot - t))})${ch.length ? '<br>' + ch.join('<br>') : ''}</div>`;
   }
   box.innerHTML = h + mine + '</div>';
 }
 
 // ---------- rendering: crew ----------
 function renderCrew() {
-  const el = $('#tab-crew'), me = meId(), n = liveNight();
-  el.innerHTML = `<div class="card"><h2>🔗 Invite your crew</h2>
-    <p class="small">Send this link to your coworkers. Everyone who opens it sees the same rota and can update it. Changes show up on all phones within seconds.</p>
+  const el = $('#tab-crew'), me = meId();
+  el.innerHTML = `<div class="card"><h2>🔗 Invite</h2>
     <div class="code">${esc(crewUrl())}</div>
     <div class="actions" style="margin-top:10px"><button class="btn acc" data-act="invite">📤 Send invite</button>
-    <button class="btn" data-act="copyinvite">📋 Copy link</button></div>
-    <div class="small mut" style="margin-top:8px">Anyone with this link can see and change the rota, so keep it in your crew chat.</div></div>
+    <button class="btn" data-act="copyinvite">📋 Copy link</button></div></div>
     <div class="card"><h2>Add person</h2>
     <form id="addform" class="addrow"><input type="text" id="newname" placeholder="Name" maxlength="20" autocomplete="off">
     <button class="btn acc">Add</button></form></div>
@@ -869,16 +761,9 @@ function renderCrew() {
       <div class="jk"><button class="mini" data-act="jk" data-id="${p.id}" data-d="-1">−</button>
         <button class="mini" data-act="jk" data-id="${p.id}" data-d="1">+</button></div>
       <button class="mini danger" data-act="delperson" data-id="${p.id}">✕</button>
-    </div>`).join('') || '<p class="mut">Nobody yet.</p>'}
-    <div class="small mut" style="margin-top:10px">✅/💤 = in for the next new night${n ? ' (for tonight, use "Something changed?")' : ''}.
-      Tap a name to rename. − / + fixes someone's 🎰 count. Totals update when a night is finished.</div></div>
-    ${doc.people.length ? `<div class="card"><h2>👤 This phone belongs to</h2><div class="chips">${doc.people.map(p =>
-      `<button class="chip ${p.id === me ? 'on' : ''}" data-act="setme" data-id="${p.id}">${esc(p.name)}</button>`).join('')}</div></div>` : ''}
-    <div class="card"><h2>How the jackpot works</h2>
-    <p class="small">Every night the wheel picks tonight's <b>jackpot line</b> 🎰. Hours are split into clean blocks, so nobody
-    ends up working 1h 39m. Whatever doesn't split evenly goes to the front of the line, one extra block each.
-    If a job turns up, ends early or someone leaves, the rest of the night is recalculated the same way.
-    In ⚖️ Fair mode the people with the fewest jackpots go on the wheel, so it evens out over time.</p></div>`;
+    </div>`).join('') || '<p class="mut">Nobody yet.</p>'}</div>
+    ${doc.people.length ? `<div class="card"><h2>👤 This phone</h2><div class="chips">${doc.people.map(p =>
+      `<button class="chip ${p.id === me ? 'on' : ''}" data-act="setme" data-id="${p.id}">${esc(p.name)}</button>`).join('')}</div></div>` : ''}`;
 }
 
 // ---------- rendering: history ----------
@@ -891,9 +776,8 @@ function renderHistory() {
       <span class="mut small">${l.s}–${l.e} · ${plural(l.j.length, 'job')}</span></div></div>
       <div class="chips">${l.m.map(([name, min]) =>
         `<span class="small">${esc(name)} ${dur(min)}${l.x.includes(name) ? ' 🎰' : ''}</span>`).join(' · ')}</div></div>`;
-  }).join('') || '<p class="mut">No finished nights yet. A night is saved here when the next one starts.</p>';
+  }).join('') || '<p class="mut">No nights yet.</p>';
   h += `</div><div class="card"><h2>Backup</h2>
-    <p class="small mut">Everything already syncs between your crew's phones. A backup file is extra safety.</p>
     <div class="actions"><button class="btn" data-act="backup">💾 Save backup</button>
     <button class="btn" data-act="restore">📂 Restore backup</button></div></div>`;
   el.innerHTML = h;
@@ -937,7 +821,7 @@ function timeOpts(n, from, to, sel) {
   const cut = cutNow(n);
   let h = '';
   for (let t = from; t <= to; t++) {
-    h += `<option value="${t}" ${t === sel ? 'selected' : ''}>${at(n, t)}${t === cut && cut > 0 ? ' (now)' : ''}${t === n.S ? ' (shift end)' : ''}</option>`;
+    h += `<option value="${t}" ${t === sel ? 'selected' : ''}>${at(n, t)}${t === cut && cut > 0 ? ' (now)' : ''}${t === n.S ? ' (end)' : ''}</option>`;
   }
   return h;
 }
@@ -947,53 +831,27 @@ function jobModal(n, j) {
   const from = j ? j.from : cut, to = j ? j.to : n.S;
   const body = `<label class="row">Name</label><input type="text" name="name" maxlength="18" value="${esc(j ? j.name : `Job ${n.jobs.length + 1}`)}">
     <div class="two">
-      <div><label class="row">Starts</label>${started ? `<div style="padding:10px 0">${at(n, j.from)} <span class="mut small">(started)</span></div>`
+      <div><label class="row">Starts</label>${started ? `<div style="padding:10px 0">${at(n, j.from)}</div>`
         : `<select name="from">${timeOpts(n, cut, n.S - 1, from)}</select>`}</div>
       <div><label class="row">Ends</label><select name="to">${timeOpts(n, Math.max(cut, (started ? j.from : cut) + 1), n.S, Math.max(to, cut))}</select></div>
     </div>
-    ${j && !started ? `<button class="btn danger" style="margin-top:14px" data-act="jobremove" data-j="${j.id}">🗑 Remove this job</button>` : ''}`;
+    ${j && !started ? `<button class="btn danger" style="margin-top:14px" data-act="jobremove" data-j="${j.id}">🗑 Remove</button>` : ''}`;
   openModal(j ? 'Edit job' : 'New job', body, val => {
     const name = (val('name') || '').trim().slice(0, 18) || 'Job';
     const f = started ? j.from : Number(val('from')), t = Number(val('to'));
     if (t <= f) { toast('The end has to be after the start'); return false; }
     if (j) {
-      editNight(`changed ${name}: ${at(n, f)}–${at(n, t)}`, night => {
+      editNight(night => {
         const k = findJob(night, j.id);
         if (k < 0) return false;
         Object.assign(night.jobs[k], { name, from: f, to: t });
       });
     } else {
-      editNight(`added ${name} (${at(n, f)}–${at(n, t)})`, night => { night.jobs.push({ id: uid(), name, from: f, to: t }); });
+      editNight(night => { night.jobs.push({ id: uid(), name, from: f, to: t }); });
     }
   });
 }
 
-function personModal(n, p) {
-  const cut = cutNow(n), started = p.from < cut;
-  const body = `<p class="small mut">When is ${esc(p.name)} around tonight?</p>
-    <div class="two">
-      <div><label class="row">From</label>${started ? `<div style="padding:10px 0">${at(n, p.from)}</div>`
-        : `<select name="from">${timeOpts(n, cut, n.S - 1, p.from)}</select>`}</div>
-      <div><label class="row">Until</label><select name="to">${timeOpts(n, Math.max(cut, p.from + 1), n.S, Math.max(p.to, cut))}</select></div>
-    </div>`;
-  openModal(p.name, body, val => {
-    const f = started ? p.from : Number(val('from')), t = Number(val('to'));
-    if (t <= f) { toast('"Until" has to be after "from"'); return false; }
-    editNight(`set ${p.name} to ${at(n, f)}–${at(n, t)}`, night => { Object.assign(np(night, p.id), { from: f, to: t }); });
-  });
-}
-
-function awayModal(n, p) {
-  const cut = cutNow(n), opts = [];
-  for (let k = 1; cut + k <= n.S && k * n.slot <= 240; k++) opts.push(k);
-  if (!opts.length) return toast("This shift is already over");
-  const body = `<p class="small mut">${esc(p.name)} is away from ${at(n, cut)} for…</p>
-    <select name="len">${opts.map(k => `<option value="${k}" ${k * n.slot === 60 ? 'selected' : ''}>${dur(k * n.slot)} (back ${at(n, cut + k)})</option>`).join('')}</select>`;
-  openModal('Away / break', body, val => {
-    const k = Number(val('len'));
-    editNight(`${p.name} away ${at(n, cut)}–${at(n, cut + k)}`, (night, c) => { np(night, p.id).away.push([c, Math.min(night.S, c + k)]); });
-  }, 'Set');
-}
 
 // ---------- roulette ----------
 let R = null, AC = null;
@@ -1048,10 +906,7 @@ function drawWheel(pool, rot) {
 
 function openRoulette(spin, doneLabel, done) {
   R = { ...spin, doneLabel, done, rot: 0, phase: 'ready' };
-  $('#r-sub').innerHTML = `Tonight's jackpot goes first in line for any extra time` +
-    (doc.settings.mode === 'fair' ? '<br><span class="small mut">⚖️ Only people with the fewest jackpots are on the wheel</span>' : '');
   $('#r-result').textContent = '';
-  $('#r-winners').textContent = '';
   $('#r-btn').textContent = 'SPIN! 🎰';
   $('#r-btn').disabled = false;
   $('#roulette').classList.remove('hidden');
@@ -1061,7 +916,6 @@ function openRoulette(spin, doneLabel, done) {
 function showLine() {
   const name = byId(R.winner)?.name || '?';
   $('#r-result').textContent = `🎉 JACKPOT! ${name}`;
-  $('#r-winners').innerHTML = 'Extra-time line:<br>' + R.line.map((id, i) => `${i + 1}. ${esc(byId(id)?.name || '?')}`).join(' · ');
   $('#r-btn').textContent = R.doneLabel;
   $('#r-btn').disabled = false;
   R.phase = 'done';
@@ -1132,7 +986,7 @@ document.addEventListener('click', e => {
     case 'present': if (p) { p.present = !p.present; commit(); } break;
     case 'setme': localStorage.setItem(ME_KEY, id); render(); break;
     case 'start': startNight(); break;
-    case 'newnight': showSetup = true; pick = null; renderTonight(); window.scrollTo(0, 0); break;
+    case 'newnight': showSetup = true; renderTonight(); window.scrollTo(0, 0); break;
     case 'cancelsetup': showSetup = false; renderTonight(); break;
     case 'cancelnight':
       if (n && confirm('Cancel tonight\'s rota? It won\'t count towards anyone\'s totals.')) { doc.night = null; commit(); }
@@ -1140,18 +994,18 @@ document.addEventListener('click', e => {
     case 'respin':
       if (n) {
         const spin = spinLine(n.people);
-        openRoulette(spin, 'Use this line ✅', () => editNight(`re-spun the jackpot. 🎰 ${nameOf(n, spin.winner)} is first in line`, night => { night.line = spin.line; }));
+        openRoulette(spin, 'Done ✅', () => editNight(night => { night.line = spin.line; }));
       }
       break;
     case 'jobadd': if (n) jobModal(n, null); break;
     case 'jobedit': if (job) jobModal(n, job); break;
     case 'jobremove':
       closeModal();
-      if (job) editNight(`removed ${job.name}`, night => { const k = findJob(night, jid); if (k < 0) return false; removeJob(night, k); });
+      if (job) editNight(night => { const k = findJob(night, jid); if (k < 0) return false; removeJob(night, k); });
       break;
     case 'jobend':
-      if (job && confirm(`${job.name} has ended? The rest of the night will be recalculated.`)) {
-        editNight(`marked ${job.name} as ended`, (night, cut) => {
+      if (job && confirm(`${job.name} has ended?`)) {
+        editNight((night, cut) => {
           const k = findJob(night, jid);
           if (k < 0) return false;
           if (night.jobs[k].from >= cut) removeJob(night, k);
@@ -1160,57 +1014,8 @@ document.addEventListener('click', e => {
       }
       break;
     case 'jobresume':
-      if (job) editNight(`${job.name} is back on`, night => { night.jobs[findJob(night, jid)].to = night.S; });
+      if (job) editNight(night => { night.jobs[findJob(night, jid)].to = night.S; });
       break;
-    case 'leave': {
-      const q = n && np(n, id);
-      if (q && confirm(`${q.name} has gone home? Their remaining time is shared out.`)) {
-        editNight(`${q.name} went home`, (night, cut) => { const x = np(night, id); x.to = Math.max(x.from, cut); });
-      }
-      break;
-    }
-    case 'away': { const q = n && np(n, id); if (q) awayModal(n, q); break; }
-    case 'back': {
-      const q = n && np(n, id);
-      if (q) {
-        editNight(`${q.name} is back`, (night, cut) => {
-          const x = np(night, id);
-          x.away = x.away.map(([a, z]) => [a, Math.min(z, cut)]).filter(([a, z]) => z > a);
-          if (x.to <= cut) { if (x.to < cut) x.away.push([x.to, cut]); x.to = night.S; }
-        });
-      }
-      break;
-    }
-    case 'arrive':
-      if (n && p) {
-        editNight(`${p.name} arrived`, (night, cut) => {
-          night.people.push({ id: p.id, name: p.name, from: cut, to: night.S, away: [] });
-          if (!night.line.includes(p.id)) night.line.push(p.id);
-        });
-      }
-      break;
-    case 'personedit': { const q = n && np(n, id); if (q) personModal(n, q); break; }
-    case 'pick': {
-      if (!n) break;
-      const blk = Number(b.dataset.b);
-      if (!pick || pick.b !== blk) pick = { b: blk, id };
-      else if (pick.id === id) pick = null;
-      else {
-        const bl = blocks(n).find(x => x.start === blk);
-        if (!bl.row.includes(pick.id) && !bl.row.includes(id)) { toast('Both are on break, nothing to swap'); pick = null; }
-        else {
-          const names = `${nameOf(n, pick.id)} ↔ ${nameOf(n, id)}`;
-          swapInPlan(n, bl.start, bl.end, pick.id, id);
-          addFeed(n, `swapped ${names} (${at(n, bl.start)}–${at(n, bl.end)})`);
-          pick = null;
-          commit();
-          toast(`Swapped ${names} ✅`);
-          break;
-        }
-      }
-      renderTonight();
-      break;
-    }
     case 'sharetext': if (n) shareText('Fireguard rota', planText(n)); break;
     case 'invite': shareText('Fireguard rota', `🔥 Join our fireguard rota: ${crewUrl()}`); break;
     case 'copyinvite': copyText(crewUrl()); break;
@@ -1228,7 +1033,7 @@ document.addEventListener('click', e => {
     case 'jk': if (p) { p.stats.jackpots = Math.max(0, p.stats.jackpots + Number(b.dataset.d)); commit(); } break;
     case 'delperson':
       if (!p) break;
-      if (n && np(n, p.id)) { toast(`${p.name} is on tonight's rota. Mark them 🏠 Gone first, or wait for the next night`); break; }
+      if (n && np(n, p.id)) { toast(`${p.name} is on tonight's rota. Remove them after tonight`); break; }
       if (confirm(`Remove ${p.name}? Their totals will be lost.`)) {
         doc.people = doc.people.filter(x => x !== p);
         commit();

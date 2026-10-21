@@ -11,25 +11,18 @@ Live at **https://xxxenomus.github.io/fireguard-rota/**
   Everyone who opens it shares the same rota, and **anyone can update it**. Changes show up on all
   phones within seconds. Each person taps their own name once so the app shows "You're on … until …".
 - **New night**: pick who's in, shift times, the jobs at the start (0–5), block size and how often
-  people swap. Then the **🎰 jackpot is spun**. It's spun every night, even with 0 or 1 jobs, and gives
-  tonight's *extra-time line*. Hours are split into clean blocks; anything that doesn't divide evenly
-  goes to the front of the line, one block each.
-  - ⚖️ *Fair*: the people with the fewest jackpots so far go on the wheel, and the rest of the line is
-    ordered by fewest jackpots.
+  people swap. Then the **🎰 jackpot is spun** (every night, even with 0 or 1 jobs). Hours are split
+  into clean blocks; anything that doesn't divide evenly goes to the jackpot winner first, then down a
+  hidden order picked by the same spin.
+  - ⚖️ *Fair*: the people with the fewest jackpots so far go on the wheel.
   - 🎲 *Pure luck*: random every time.
-- **Everyone tonight**: for each person, where they're working, how much 🔨 work and ☕ break they
-  have, and how much is still to do.
-- **Own worksite**: everyone's first site of the night becomes their own (📍 on their card). After a
-  break they go back to it, and whoever was covering hands it back. With more people than sites, a
-  couple of people still have to float between sites.
-- **Something changed?** These buttons work any time during the shift:
-  - ➕ New job (now or later, optionally with an end time), ⛔ job ended, ▶ job back on, ✏️ edit times
-  - ⏸ someone's away for a bit, 🏠 gone home, 👋 back / arrived
-  
-  The rest of the night is recalculated from the current block so totals stay fair (in proportion to
-  how long each person is around), with leftovers going down the jackpot line. Earlier blocks stay as
-  they happened. A log shows who changed what.
-- **Swap**: tap two names in the same row of the timeline to swap them.
+- **Tonight screen**: *Right now* (who's on each job, next change, your own next stretch), then each
+  person's card (📍 main site, 🔨 work, ☕ break, time left, their stretches), then the jobs.
+- **Own worksite**: everyone's first site of the night becomes their own. After a break they go back
+  to it, and whoever was covering hands it back.
+- **Jobs**: ➕ new job (now or later, optionally with an end time), ⛔ ended, ▶ back on, ✏️ edit times.
+  The rest of the night is recalculated from the current block so totals stay fair. Earlier blocks
+  stay as they happened.
 - **History**: a night is saved into everyone's totals (nights, hours, 🎰) when the next night starts.
 
 ## Sync
