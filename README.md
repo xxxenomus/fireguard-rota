@@ -31,16 +31,24 @@ Live at **https://xxxenomus.github.io/fireguard-rota/**
 
 ## Sync
 
-The crew data is sent through [ntfy.sh](https://ntfy.sh), a free relay that needs no accounts. Each
-change is one small compressed message. Phones listen live and keep the newest copy; every phone also
-keeps its own copy, so the app works offline and catches up once it's back online.
+The crew data lives in a Firebase Realtime Database (free Spark plan, region europe-west1), project
+`fireguard-rota-caf41748`, at `/crews/<crew code>`. Phones stream changes live and keep their own
+copy, so the app works offline and catches up once it's back online. No accounts are needed.
 
-- Anonymous limit: 250 messages per day per network. A night typically uses 10–40.
-- ntfy keeps messages for 12 hours. If nobody has opened the app since then, the first phone that
-  does re-uploads its copy automatically.
-- **Anyone with the invite link can see and change the rota**, so keep it in the crew chat.
+Security rules (`database.rules.json`):
+- Nobody can list crews. You can only read or write a crew if you know its code (from the invite link).
+- A save is only accepted if its `rev` is higher than what's stored, so an outdated phone can't
+  overwrite newer data. If two people save at the same moment, the first one wins and the other is
+  asked to redo their change.
+- Crews can't be deleted from the app.
+
+**Anyone with the invite link can see and change the rota**, so keep it in the crew chat.
+
+Until 28 Oct 2026 the app also picks up anything an old copy of the app left on the previous relay
+(ntfy.sh), so nothing is lost while phones update.
 
 ## Hosting
 
 Plain static files on GitHub Pages: `index.html app.js style.css sw.js manifest.webmanifest icon.svg`.
-Push to `main` and Pages redeploys in about a minute. Bump `CACHE` in `sw.js` when you ship changes.
+Push to `main` and Pages redeploys in about a minute. Phones load the newest version whenever they're
+online and fall back to the saved copy when offline. Bump `CACHE` in `sw.js` when you ship changes.

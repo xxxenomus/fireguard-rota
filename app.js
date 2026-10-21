@@ -7,7 +7,8 @@ const OLD_KEY = 'fireguard-rota-v1';  // first version, migrated once
 const ME_KEY = 'fireguard-me-id';
 const CREW_KEY = 'fireguard-crew';
 const DEV_KEY = 'fireguard-device';
-const RELAY = 'https://ntfy.sh/';
+const DB = 'https://fireguard-rota-caf41748-default-rtdb.europe-west1.firebasedatabase.app';
+const LEGACY_RELAY = 'https://ntfy.sh/';
 const COLORS = ['#ff6b35', '#f7c548', '#3ec1d3', '#a06cd5', '#58d68d', '#ff4f79', '#4d96ff', '#ffa94d'];
 const DEFAULTS = { start: '22:00', end: '06:00', jobs: 3, slot: 30, block: 120, mode: 'fair', jobNames: ['', '', '', '', ''] };
 
@@ -292,7 +293,7 @@ function closeNight() {
     m: n.people.map(p => [p.name, tot[p.id] * n.slot]),
     x: n.people.filter(p => ex[p.id]).map(p => p.name),
   });
-  doc.log = doc.log.slice(0, 14);
+  doc.log = doc.log.slice(0, 60);
   n.closed = true;
 }
 
@@ -430,31 +431,19 @@ async function shareText(title, text) {
 }
 
 // ---------- sync ----------
-// The crew doc is sent through ntfy.sh (free, no accounts). Each change is posted as one
-// compressed message; phones listen live and keep the newest copy. ntfy keeps messages
-// for 12 hours, so a phone re-posts its copy if the relay has nothing newer.
+// The crew doc lives in a Firebase Realtime Database (free plan) at /crews/<crew code>.
+// Every save writes the whole doc with a higher rev. The database rules refuse anything
+// that isn't newer, so an outdated phone can't overwrite fresher data. Phones stream
+// changes live and keep their own copy, so the app also works offline.
 const sync = { crew: null, es: null, status: 'connecting', timer: null, dirty: false, joined: false, pendingRender: false, lastConnect: 0 };
-const topic = () => 'fgrota-' + sync.crew;
+const crewPath = () => `${DB}/crews/${sync.crew}.json`;
 const newer = (a, b) => a.rev > b.rev || (a.rev === b.rev && a.ts > b.ts);
+const unwrap = w => { try { return w && typeof w.data === 'string' ? JSON.parse(w.data) : null; } catch (e) { return null; } };
 
-function toB64(bytes) {
-  let s = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-async function pack(d) {
-  const json = JSON.stringify(d);
-  if (!window.CompressionStream) return 'FG2J:' + json;
-  const z = new Blob([json]).stream().pipeThrough(new CompressionStream('deflate-raw'));
-  return 'FG2:' + toB64(new Uint8Array(await new Response(z).arrayBuffer()));
-}
-async function unpack(msg) {
-  if (typeof msg !== 'string') return null;
-  if (msg.startsWith('FG2J:')) return JSON.parse(msg.slice(5));
-  if (!msg.startsWith('FG2:')) return null;
-  const bytes = Uint8Array.from(atob(msg.slice(4)), c => c.charCodeAt(0));
-  const z = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return JSON.parse(await new Response(z).text());
+async function fetchRemote() {
+  const r = await fetch(crewPath());
+  if (!r.ok) throw new Error('db ' + r.status);
+  return unwrap(await r.json());
 }
 
 function setStatus(s) {
@@ -471,17 +460,31 @@ function publishSoon(delay = 900) {
 }
 async function publish() {
   if (!sync.crew || !sync.dirty) return;
+  const sent = doc.rev;
   try {
-    const body = await pack(doc);
-    if (body.length > 4000) {
-      doc.log = doc.log.slice(0, Math.max(0, doc.log.length - 3));
-      if (doc.night) doc.night.feed = doc.night.feed.slice(0, 8);
-      saveLocal();
-      return publish();
+    const body = JSON.stringify({ rev: doc.rev, ts: doc.ts, by: device, data: JSON.stringify(doc) });
+    const r = await fetch(crewPath(), { method: 'PUT', body });
+    if (r.status === 401 || r.status === 403) {
+      // refused: the database already has a newer version
+      const remote = await fetchRemote();
+      if (remote && remote.by === device && remote.rev >= sent) {
+        // our own later save got there first; nothing lost
+        if (doc.rev === sent) sync.dirty = false;
+        setStatus('live');
+      } else if (remote && remote.rev >= sent) {
+        // someone else saved first; theirs wins
+        sync.dirty = false;
+        doc.rev = -1;
+        receive(remote);
+        toast('Someone else saved a change at the same moment. Yours wasn\'t saved, please redo it');
+      } else {
+        sync.dirty = false;
+        toast('Could not save to the crew. Try again');
+      }
+      return;
     }
-    const r = await fetch(RELAY + topic(), { method: 'POST', body });
-    if (!r.ok) throw new Error('relay ' + r.status);
-    sync.dirty = false;
+    if (!r.ok) throw new Error('db ' + r.status);
+    if (doc.rev === sent) sync.dirty = false;
     setStatus('live');
   } catch (e) {
     setStatus('offline');
@@ -502,26 +505,33 @@ function receive(remote) {
   return true;
 }
 
+// The first version synced through ntfy.sh. Until everyone's phone has updated, also pick up
+// anything newer that an old copy of the app left there. (Messages there expire after 12h.)
+async function legacyImport() {
+  if (Date.now() > Date.UTC(2026, 9, 28) || !window.DecompressionStream) return;
+  try {
+    const r = await fetch(`${LEGACY_RELAY}fgrota-${sync.crew}/json?poll=1&since=all`);
+    for (const line of (await r.text()).split('\n')) {
+      try {
+        const m = JSON.parse(line);
+        if (m.event !== 'message' || !m.message.startsWith('FG2:')) continue;
+        const bytes = Uint8Array.from(atob(m.message.slice(4)), c => c.charCodeAt(0));
+        const z = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        receive(JSON.parse(await new Response(z).text()));
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
+
 async function connect() {
   if (!sync.crew) return;
   sync.lastConnect = Date.now();
   setStatus('connecting');
   try {
-    const r = await fetch(`${RELAY}${topic()}/json?poll=1&since=all`);
-    if (!r.ok) throw new Error('relay ' + r.status);
-    let latest = null, latestTime = 0;
-    for (const line of (await r.text()).split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const m = JSON.parse(line);
-        if (m.event !== 'message') continue;
-        const d = await unpack(m.message);
-        if (d && d.v === 2 && (!latest || newer(d, latest))) { latest = d; latestTime = m.time; }
-      } catch (e) {}
-    }
-    if (latest) receive(latest);
-    const stale = !latest || newer(doc, latest) || Date.now() / 1000 - latestTime > 8 * 3600;
-    if (doc.people.length && stale) {
+    const remote = await fetchRemote();
+    if (remote) receive(remote);
+    await legacyImport();
+    if (doc.people.length && (!remote || newer(doc, remote))) {
       if (!doc.rev) doc.rev = 1;
       publishSoon(300);
     }
@@ -534,13 +544,17 @@ async function connect() {
 function openStream() {
   if (!window.EventSource) return;
   if (sync.es) sync.es.close();
-  const es = new EventSource(`${RELAY}${topic()}/sse`);
-  es.onmessage = async e => {
+  const es = new EventSource(crewPath());
+  const refresh = () => fetchRemote().then(receive).catch(() => {});
+  es.addEventListener('put', e => {
     try {
       const m = JSON.parse(e.data);
-      if (m.event === 'message') receive(await unpack(m.message));
+      if (m.path === '/') receive(unwrap(m.data));
+      else refresh();
     } catch (err) {}
-  };
+  });
+  es.addEventListener('patch', refresh);
+  es.addEventListener('cancel', () => setStatus('offline'));
   es.onopen = () => setStatus('live');
   es.onerror = () => setStatus(navigator.onLine === false ? 'offline' : 'connecting');
   sync.es = es;

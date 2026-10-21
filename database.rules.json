@@ -1,0 +1,18 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "crews": {
+      "$crew": {
+        ".read": "$crew.length >= 8",
+        ".write": "$crew.length >= 8 && newData.exists() && (!data.exists() || newData.child('rev').val() > data.child('rev').val())",
+        ".validate": "newData.hasChildren(['rev', 'ts', 'by', 'data'])",
+        "rev": { ".validate": "newData.isNumber()" },
+        "ts": { ".validate": "newData.isNumber()" },
+        "by": { ".validate": "newData.isString() && newData.val().length < 40" },
+        "data": { ".validate": "newData.isString() && newData.val().length < 300000" },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
