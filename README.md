@@ -1,67 +1,39 @@
 # 🔥 Fireguard Rota
 
-Shared night-shift fireguard rota with clean time blocks, a nightly jackpot roulette, and live
-updates that sync between the whole crew's phones.
+One-screen rota for a 5-person fireguard night shift, 19:00–07:00 in 30-minute blocks.
 
 Live at **https://xxxenomus.github.io/fireguard-rota/**
 
-## Rota (fixed timetables)
+## How it works
 
-The 📋 Rota tab opens by default. Tap how many jobs there are (1–5) to see that night's fixed
-timetable for 19:00–07:00 in 30-minute blocks. The five slots are Guy 1, Guy 2, …; the crew decides
-who takes which. Hours are split as evenly as possible (at most 30 minutes apart). Whoever ends up
-with more is 😬 Unlucky, and whoever ends up with less is 🍀 Lucky.
+- **Jobs at the start**: tap 1–5. The night starts from a fixed timetable for that many jobs, so every
+  phone shows the same thing. The five slots are Guy 1, Guy 2, …; the crew decides who takes which.
+  Hours are at most 30 minutes apart. Whoever works more is 😬 Unlucky, whoever works less is 🍀 Lucky.
 
-| Jobs | Hours | How it rotates |
-|---|---|---|
-| 1 | 2h 30m each, Lucky 2h | 1h–1h30 stretches |
-| 2 | 5h each, 2 Lucky 4h 30m | 1h–1h30 stretches, one guy changes job once |
-| 3 | 7h each, 2 Unlucky 7h 30m | 1h30 on, 1h off, then the next job (1 → 2 → 3 → 1) |
-| 4 | 9h 30m each, Unlucky 10h | Guys 1–4 own a job; Unlucky is the relief who gives breaks |
-| 5 | 12h each | everyone on their own job all night |
+  | Jobs | Hours | How it rotates |
+  |---|---|---|
+  | 1 | 2h 30m each, Lucky 2h | 1h–1h30 stretches |
+  | 2 | 5h each, 2 Lucky 4h 30m | 1h–1h30 stretches, one guy changes job once |
+  | 3 | 7h each, 2 Unlucky 7h 30m | 1h30 on, 1h off, then the next job (1 → 2 → 3 → 1) |
+  | 4 | 9h 30m each, Unlucky 10h | Guys 1–4 own a job; Unlucky is the relief who gives breaks |
+  | 5 | 12h each | everyone on their own job all night |
 
-The timetables are fixed data in `app.js` (`TEMPLATES`), so every phone shows the same thing.
+- **Jobs change during the night**: ⛔ Ended, ▶ Back on, ➕ New job. The app re-generates the rest of
+  the night on the phone. Past blocks stay as they happened, the night's hours stay as even as possible
+  (leftovers go to Unlucky first, Lucky last), and it aims for 60–90 minute stretches, people staying
+  on their own job, no 30-minute breaks, and as few changes to the old plan as possible.
+- **Sync**: the 🔗 Invite link puts everyone on the same rota. Anyone can mark a job ended, and every
+  phone updates within seconds. Phones keep their own copy, so the app works offline too.
+- **📤 Send to the group** shares tonight's timetable as text.
 
-## How it works (live rota: Tonight tab)
+## Sync details
 
-- **Crew**: one phone makes the crew, then sends the **invite link** (Crew tab → Send invite).
-  Everyone who opens it shares the same rota, and **anyone can update it**. Changes show up on all
-  phones within seconds. Each person taps their own name once so the app shows "You're on … until …".
-- **New night**: pick who's in, shift times, the jobs at the start (0–5), block size and how often
-  people swap. Then the **🎰 jackpot is spun** (every night, even with 0 or 1 jobs). Hours are split
-  into clean blocks; anything that doesn't divide evenly goes to the jackpot winner first, then down a
-  hidden order picked by the same spin.
-  - ⚖️ *Fair*: the people with the fewest jackpots so far go on the wheel.
-  - 🎲 *Pure luck*: random every time.
-- **Tonight screen**: *Right now* (who's on each job, next change, your own next stretch), then each
-  person's card (📍 main site, 🔨 work, ☕ break, time left, their stretches), then the jobs.
-- **Own worksite**: everyone's first site of the night becomes their own. After a break they go back
-  to it, and whoever was covering hands it back.
-- **Jobs**: ➕ new job (now or later, optionally with an end time), ⛔ ended, ▶ back on, ✏️ edit times.
-  The rest of the night is recalculated from the current block so totals stay fair. Earlier blocks
-  stay as they happened.
-- **History**: a night is saved into everyone's totals (nights, hours, 🎰) when the next night starts.
-
-## Sync
-
-The crew data lives in a Firebase Realtime Database (free Spark plan, region europe-west1), project
-`fireguard-rota-caf41748`, at `/crews/<crew code>`. Phones stream changes live and keep their own
-copy, so the app works offline and catches up once it's back online. No accounts are needed.
-
-Security rules (`database.rules.json`):
-- Nobody can list crews. You can only read or write a crew if you know its code (from the invite link).
-- A save is only accepted if its `rev` is higher than what's stored, so an outdated phone can't
-  overwrite newer data. If two people save at the same moment, the first one wins and the other is
-  asked to redo their change.
-- Crews can't be deleted from the app.
-
-**Anyone with the invite link can see and change the rota**, so keep it in the crew chat.
-
-Until 28 Oct 2026 the app also picks up anything an old copy of the app left on the previous relay
-(ntfy.sh), so nothing is lost while phones update.
+Firebase Realtime Database (free Spark plan, europe-west1), project `fireguard-rota-caf41748`, at
+`/crews/<crew code>`. Rules in `database.rules.json`: crews can't be listed, a crew can only be read or
+written with its code, saves must have a higher `rev` than what's stored, and nothing can be deleted.
+Anyone with the invite link can change the rota.
 
 ## Hosting
 
-Plain static files on GitHub Pages: `index.html app.js style.css sw.js manifest.webmanifest icon.svg`.
-Push to `main` and Pages redeploys in about a minute. Phones load the newest version whenever they're
-online and fall back to the saved copy when offline. Bump `CACHE` in `sw.js` when you ship changes.
+Static files on GitHub Pages: `index.html app.js style.css sw.js manifest.webmanifest icon.svg`.
+Push to `main` and Pages redeploys in about a minute. Bump `CACHE` in `sw.js` when you ship changes.

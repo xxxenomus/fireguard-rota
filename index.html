@@ -17,46 +17,8 @@
   <div id="clock"></div>
 </header>
 
-<main>
-  <section id="tab-rota" class="tab active"></section>
-  <section id="tab-tonight" class="tab"></section>
-  <section id="tab-crew" class="tab"></section>
-  <section id="tab-history" class="tab"></section>
-</main>
+<main id="rota"></main>
 
-<nav>
-  <button class="active" data-act="tab" data-tab="rota"><span>📋</span>Rota</button>
-  <button data-act="tab" data-tab="tonight"><span>🌙</span>Tonight</button>
-  <button data-act="tab" data-tab="crew"><span>👷</span>Crew</button>
-  <button data-act="tab" data-tab="history"><span>📜</span>History</button>
-</nav>
-
-<div id="roulette" class="overlay hidden">
-  <div class="rbox">
-    <h2>🎰 Jackpot Roulette</h2>
-    <div class="wheelwrap">
-      <div class="pointer">▼</div>
-      <canvas id="wheel" width="600" height="600"></canvas>
-    </div>
-    <div id="r-result"></div>
-    <button id="r-btn" class="big">SPIN! 🎰</button>
-    <button id="r-skip" class="link">Skip animation</button>
-    <button id="r-cancel" class="link">Cancel</button>
-  </div>
-</div>
-
-<div id="modal" class="overlay hidden">
-  <div class="mbox">
-    <h2 id="m-title"></h2>
-    <div id="m-body"></div>
-    <div class="actions">
-      <button id="m-cancel" class="btn">Cancel</button>
-      <button id="m-ok" class="btn acc">Save</button>
-    </div>
-  </div>
-</div>
-
-<input type="file" id="restore-file" accept="application/json,.json" hidden>
 <div id="toast"></div>
 
 <script src="app.js"></script>
