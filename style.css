@@ -124,3 +124,4 @@ header h1 { margin-right: auto; }
 .mbox { background: var(--card); border-radius: 16px; padding: 16px; width: 100%; max-width: 420px; }
 .mbox h2 { margin: 0 0 8px; font-size: 18px; }
 .mbox .actions { margin-top: 16px; }
+.tpl-now { color: var(--acc); font-weight: 700; }

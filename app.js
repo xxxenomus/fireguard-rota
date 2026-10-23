@@ -12,6 +12,11 @@ const LEGACY_RELAY = 'https://ntfy.sh/';
 const COLORS = ['#ff6b35', '#f7c548', '#3ec1d3', '#a06cd5', '#58d68d', '#ff4f79', '#4d96ff', '#ffa94d'];
 const DEFAULTS = { start: '19:00', end: '07:00', jobs: 3, slot: 60, block: 60, mode: 'fair', jobNames: ['', '', '', '', ''] };
 
+// Fixed timetables for 1-5 jobs, 19:00-07:00 in 30-min blocks. grid[block][job] = guy number.
+// Generated once and kept fixed so every phone shows the same thing.
+const TEMPLATES = {"1":{"roles":["Guy 1","Guy 2","Guy 3","Guy 4","Lucky"],"grid":["4","4","0","0","0","1","1","1","2","2","3","3","3","2","2","2","0","0","4","4","1","1","3","3"]},"2":{"roles":["Guy 1","Guy 2","Guy 3","Lucky 1","Lucky 2"],"grid":["03","03","13","14","04","04","01","21","21","23","03","03","24","24","04","01","01","21","24","24","14","13","23","23"]},"3":{"roles":["Guy 1","Guy 2","Guy 3","Unlucky 1","Unlucky 2"],"grid":["302","304","314","214","210","230","430","431","421","021","023","043","143","142","102","302","304","314","214","210","230","430","431","421"]},"4":{"roles":["Guy 1","Guy 2","Guy 3","Guy 4","Unlucky"],"grid":["4123","0423","0143","0124","0123","4123","0423","0143","0124","0123","4123","0423","0143","0124","0123","4123","0423","0143","0124","0123","4123","0423","0143","0124"]},"5":{"roles":["Guy 1","Guy 2","Guy 3","Guy 4","Guy 5"],"grid":["01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234"]}};
+const TPL_KEY = 'fireguard-tpl-jobs';
+
 const rnd = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
 const uid = () => 'p' + Math.random().toString(36).slice(2, 9);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -592,6 +597,58 @@ function initCrew() {
   sync.crew = crew;
 }
 
+// ---------- rendering: rota (fixed timetables) ----------
+const TPL_NOTES = {
+  3: 'After your break, go to the next job: 1 → 2 → 3 → 1.',
+  4: 'Unlucky is the relief: he goes round giving everyone their break.',
+  5: 'Everyone stays on their own job all night.',
+};
+const tplAt = b => fmt(19 * 60 + b * 30);
+const tplJobs = () => Number(localStorage.getItem(TPL_KEY)) || 3;
+const tplLabel = name => (name.startsWith('Unlucky') ? '😬 ' : name.startsWith('Lucky') ? '🍀 ' : '') + name;
+function tplSegs(J, guy) {
+  const segs = [];
+  TEMPLATES[J].grid.forEach((row, t) => {
+    const k = row.indexOf(String(guy));
+    if (k < 0) return;
+    const L = segs[segs.length - 1];
+    if (L && L.end === t) { L.end = t + 1; if (L.jobs[L.jobs.length - 1] !== k) L.jobs.push(k); }
+    else segs.push({ jobs: [k], start: t, end: t + 1 });
+  });
+  return segs;
+}
+const tplJobsText = x => 'Job ' + x.jobs.map(k => k + 1).join(' → ');
+// current block of the 19:00-07:00 night, or -1 outside it
+function tplNow() {
+  const d = new Date(), m = (d.getHours() * 60 + d.getMinutes() - 19 * 60 + 1440) % 1440;
+  return m < 720 ? Math.floor(m / 30) : -1;
+}
+function tplText(J) {
+  let s = `🔥 Rota · ${plural(J, 'job')} · 19:00–07:00\n\n`;
+  TEMPLATES[J].roles.forEach((name, i) => {
+    const segs = tplSegs(J, i), work = segs.reduce((a, x) => a + x.end - x.start, 0) * 30;
+    s += `• ${tplLabel(name)} (${dur(work)}): ${segs.map(x => `${tplAt(x.start)}–${tplAt(x.end)} ${tplJobsText(x)}`).join(', ')}\n`;
+  });
+  return s + (TPL_NOTES[J] ? `\n${TPL_NOTES[J]}\n` : '');
+}
+function renderRota() {
+  const J = tplJobs(), tpl = TEMPLATES[J], now = tplNow();
+  let h = `<div class="card"><h2>Jobs tonight</h2><div class="chips">${[1, 2, 3, 4, 5].map(k =>
+    `<button class="chip ${k === J ? 'on' : ''}" data-act="tpl" data-val="${k}">${k}</button>`).join('')}</div>
+    ${TPL_NOTES[J] ? `<div class="small" style="margin-top:10px">${TPL_NOTES[J]}</div>` : ''}</div>`;
+  h += '<div class="card"><h2>19:00–07:00</h2><div class="people">' + tpl.roles.map((name, i) => {
+    const segs = tplSegs(J, i), work = segs.reduce((a, x) => a + x.end - x.start, 0);
+    return `<div class="pp"><div class="pp-top"><span class="tag" style="--c:${COLORS[i]}">${esc(tplLabel(name))}</span></div>
+      <div class="wt">🔨 <b>${dur(work * 30)}</b> · ☕ <b>${dur((24 - work) * 30)}</b></div>
+      <div class="pp-segs">${segs.map(x => {
+        const cur = now >= x.start && now < x.end;
+        return `<div class="${cur ? 'tpl-now' : ''}">${tplAt(x.start)}–${tplAt(x.end)} <span class="mut">${tplJobsText(x)}</span></div>`;
+      }).join('')}</div></div>`;
+  }).join('') + '</div></div>';
+  h += '<div class="card"><button class="btn acc" style="width:100%" data-act="sendtpl">📤 Send to the group</button></div>';
+  $('#tab-rota').innerHTML = h;
+}
+
 // ---------- rendering: tonight ----------
 function setupHTML() {
   const st = doc.settings, c = calcSetup();
@@ -785,6 +842,7 @@ function renderHistory() {
 
 function render() {
   sync.pendingRender = false;
+  renderRota();
   renderTonight();
   renderCrew();
   renderHistory();
@@ -977,6 +1035,8 @@ document.addEventListener('click', e => {
   const jid = b.dataset.j, job = n && jid ? n.jobs[findJob(n, jid)] : null;
   switch (b.dataset.act) {
     case 'tab': switchTab(b.dataset.tab); break;
+    case 'tpl': localStorage.setItem(TPL_KEY, b.dataset.val); renderRota(); break;
+    case 'sendtpl': shareText('Fireguard rota', tplText(tplJobs())); break;
     case 'set': {
       const key = b.dataset.key;
       doc.settings[key] = key === 'mode' ? b.dataset.val : Number(b.dataset.val);
@@ -1098,6 +1158,7 @@ function tick() {
   const d = new Date();
   $('#clock').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   renderNow();
+  if (tplNow() !== tick.block) { tick.block = tplNow(); renderRota(); }
 }
 
 document.addEventListener('visibilitychange', () => {

@@ -5,7 +5,24 @@ updates that sync between the whole crew's phones.
 
 Live at **https://xxxenomus.github.io/fireguard-rota/**
 
-## How it works
+## Rota (fixed timetables)
+
+The 📋 Rota tab opens by default. Tap how many jobs there are (1–5) to see that night's fixed
+timetable for 19:00–07:00 in 30-minute blocks. The five slots are Guy 1, Guy 2, …; the crew decides
+who takes which. Hours are split as evenly as possible (at most 30 minutes apart). Whoever ends up
+with more is 😬 Unlucky, and whoever ends up with less is 🍀 Lucky.
+
+| Jobs | Hours | How it rotates |
+|---|---|---|
+| 1 | 2h 30m each, Lucky 2h | 1h–1h30 stretches |
+| 2 | 5h each, 2 Lucky 4h 30m | 1h–1h30 stretches, one guy changes job once |
+| 3 | 7h each, 2 Unlucky 7h 30m | 1h30 on, 1h off, then the next job (1 → 2 → 3 → 1) |
+| 4 | 9h 30m each, Unlucky 10h | Guys 1–4 own a job; Unlucky is the relief who gives breaks |
+| 5 | 12h each | everyone on their own job all night |
+
+The timetables are fixed data in `app.js` (`TEMPLATES`), so every phone shows the same thing.
+
+## How it works (live rota: Tonight tab)
 
 - **Crew**: one phone makes the crew, then sends the **invite link** (Crew tab → Send invite).
   Everyone who opens it shares the same rota, and **anyone can update it**. Changes show up on all
