@@ -7,11 +7,15 @@ const CREW_KEY = 'fireguard-crew';
 const DEV_KEY = 'fireguard-device';
 const DB = 'https://fireguard-rota-caf41748-default-rtdb.europe-west1.firebasedatabase.app';
 const COLORS = ['#ff6b35', '#f7c548', '#3ec1d3', '#a06cd5', '#58d68d'];
-const START = 19 * 60, S = 24, P = 5, MAX_JOBS = 5; // 19:00–07:00 in 30-minute blocks, 5 guys
+const START = 19 * 60, P = 5, MAX_JOBS = 5; // 19:00–07:00 in 30-minute blocks, 5 guys
+let S = 24; // half-hours in tonight's shift: 24, or 26 / 22 on the nights the clocks change
 
 // Fixed timetables for 1-5 jobs. grid[block][job] = guy number.
 // Every night starts from one of these, so every phone shows the same thing.
 const TEMPLATES = {"1":{"roles":["Guy 1","Guy 2","Guy 3","Guy 4","Lucky"],"grid":["4","4","0","0","0","1","1","1","2","2","3","3","3","2","2","2","0","0","4","4","1","1","3","3"]},"2":{"roles":["Guy 1","Guy 2","Guy 3","Lucky 1","Lucky 2"],"grid":["03","03","13","14","04","04","01","21","21","23","03","03","24","24","04","01","01","21","24","24","14","13","23","23"]},"3":{"roles":["Guy 1","Guy 2","Guy 3","Unlucky 1","Unlucky 2"],"grid":["302","304","314","214","210","230","430","431","421","021","023","043","143","142","102","302","304","314","214","210","230","430","431","421"]},"4":{"roles":["Guy 1","Guy 2","Guy 3","Guy 4","Unlucky"],"grid":["4123","0423","0143","0124","0123","4123","0423","0143","0124","0123","4123","0423","0143","0124","0123","4123","0423","0143","0124","0123","4123","0423","0143","0124"]},"5":{"roles":["Guy 1","Guy 2","Guy 3","Guy 4","Guy 5"],"grid":["01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234","01234"]}};
+// Tonight only (24-25 Oct 2026, clocks go back at 03:00, so 26 half-hours). Names instead of Guy 1-5;
+// Liudas goes first and Linas works 02:00 -> 02:00.
+const SPECIAL = { '2026-10-24': {"names":["Liudas","Martynas","Lukas","Linas","Daniels"],"pin":{"guy":3,"from":14,"to":16},"grids":{"1":["0","0","4","4","4","0","0","0","1","1","1","4","4","4","3","3","1","1","2","2","3","3","3","2","2","2"],"2":["03","03","02","12","12","14","04","04","03","23","23","14","14","14","03","03","14","14","13","23","23","24","04","04","12","12"],"3":["140","140","120","123","423","423","140","140","120","423","423","143","140","120","123","423","420","130","130","430","420","123","123","120","430","430"],"4":["0234","0234","0134","0214","0231","1234","0234","0134","0214","0231","1234","0234","0134","0214","0231","1234","0214","0134","0234","0231","1234","0234","0134","0214","0231","1234"],"5":["42301","42301","42301","42301","42301","42301","42301","42301","42301","42301","42301","42301","42301","42301","32401","32401","42301","42301","42301","42301","42301","42301","42301","42301","42301","42301"]}} };
 const NOTES = {
   3: 'After your break, go to the next job: 1 → 2 → 3 → 1.',
   4: 'Unlucky is the relief: he goes round giving everyone their break.',
@@ -24,7 +28,8 @@ const fmt = min => { min = ((min % 1440) + 1440) % 1440; return String(Math.floo
 const dur = min => { const h = Math.floor(min / 60), m = min % 60; return h && m ? `${h}h ${m}m` : h ? `${h}h` : `${m}m`; };
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-const at = t => fmt(START + t * 30);
+// clock time at the start of block t (real clock, so it's right when the clocks change)
+const at = t => { const d = new Date((doc.night ? doc.night.startTs : shiftStart()) + t * 1800000); return fmt(d.getHours() * 60 + d.getMinutes()); };
 
 function toast(msg) {
   const t = $('#toast');
@@ -57,26 +62,50 @@ function commit() {
 let doc = loadDoc();
 const device = localStorage.getItem(DEV_KEY) || (() => { const d = uid(); localStorage.setItem(DEV_KEY, d); return d; })();
 
+// 19:00 on the given day (0 = today) and 07:00 the next morning, by the real clock
+function nightBounds(day) {
+  const s = new Date();
+  s.setDate(s.getDate() + day);
+  s.setHours(19, 0, 0, 0);
+  const e = new Date(s);
+  e.setDate(e.getDate() + 1);
+  e.setHours(7, 0, 0, 0);
+  return [s.getTime(), e.getTime()];
+}
 // Timestamp of the shift start: the one running now, else the next one.
 function shiftStart() {
-  const now = Date.now(), d = new Date();
-  d.setHours(19, 0, 0, 0);
-  let ts = d.getTime();
-  if (ts - 86400000 + S * 1800000 > now) ts -= 86400000;
-  else if (ts + S * 1800000 <= now) ts += 86400000;
-  return ts;
+  const [ps, pe] = nightBounds(-1);
+  return Date.now() < pe ? ps : nightBounds(0)[0];
 }
+function nightLength(startTs) {
+  const e = new Date(startTs);
+  e.setDate(e.getDate() + 1);
+  e.setHours(7, 0, 0, 0);
+  return Math.round((e.getTime() - startTs) / 1800000);
+}
+const dayKey = ts => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
 function freshNight(J, startTs) {
-  return {
-    startTs, j0: J, changed: false, roles: TEMPLATES[J].roles.slice(),
-    jobs: Array.from({ length: J }, () => ({ from: 0, to: S })),
-    grid: TEMPLATES[J].grid.map(r => r.split('').map(Number)),
-  };
+  const len = nightLength(startTs), sp = SPECIAL[dayKey(startTs)];
+  const n = { startTs, S: len, j0: J, changed: false, roles: TEMPLATES[J].roles.slice(), jobs: Array.from({ length: J }, () => ({ from: 0, to: len })) };
+  S = len;
+  if (sp && sp.grids[J].length === len) {
+    Object.assign(n, { roles: sp.names.slice(), pin: sp.pin, grid: sp.grids[J].map(r => r.split('').map(Number)) });
+  } else if (len === 24) {
+    n.grid = TEMPLATES[J].grid.map(r => r.split('').map(Number));
+  } else {
+    // a clock-change night without a ready-made timetable: work one out
+    n.grid = regen(n, 0, Array.from({ length: len }, () => new Array(J).fill(-1)));
+  }
+  return n;
 }
 // Each night starts from the fixed timetable (same on every phone, so nothing needs sending).
 function ensureNight() {
   const ts = shiftStart();
-  if (!doc.night || doc.night.startTs !== ts) doc.night = freshNight(doc.night ? doc.night.j0 : 3, ts);
+  if (!doc.night || doc.night.startTs !== ts || (doc.night.S || 24) !== nightLength(ts)) {
+    doc.night = freshNight(doc.night ? doc.night.j0 : 3, ts);
+  }
+  S = doc.night.S || 24;
 }
 // Changes take effect from the nearest block boundary; everything before it stays as it happened.
 const cutNow = n => clamp(Math.round((Date.now() - n.startTs) / 1800000), 0, S);
@@ -125,13 +154,20 @@ function regen(n, cut, prev) {
     // safety net: never leave a running job empty
     for (const k of A) if (row[k] < 0) row[k] = [0, 1, 2, 3, 4].find(i => !row.includes(i));
   }
-  return polish(g, cut, prev);
+  return polish(g, cut, prev, n.pin);
 }
 
 // Lower is tidier.
-function score(g, cut, prev) {
+function score(g, cut, prev, pin) {
   const J = g[0].length;
   let sc = 0;
+  // a pinned stretch (tonight: Linas 02:00 -> 02:00) must stay exactly as it is, wherever people can rest
+  if (pin) {
+    for (let t = Math.max(cut, pin.from - 1); t <= pin.to && t < S; t++) {
+      const on = g[t].includes(pin.guy), want = t >= pin.from && t < pin.to, busy = g[t].filter(x => x >= 0).length;
+      if (on !== want && (want ? busy > 0 : busy < P)) sc += 3000;
+    }
+  }
   for (let p = 0; p < P; p++) {
     const cnt = new Array(J).fill(0);
     for (let t = 0; t < S; t++) { const k = g[t].indexOf(p); if (k >= 0) cnt[k]++; }
@@ -166,10 +202,10 @@ function score(g, cut, prev) {
   return sc;
 }
 
-function polish(g, cut, prev, iters = 70000) {
+function polish(g, cut, prev, pin, iters = 70000) {
   const J = g[0].length, F = S - cut, rint = x => Math.floor(Math.random() * x);
   if (F <= 0) return g;
-  let cur = g, cs = score(g, cut, prev), best = cur, bs = cs;
+  let cur = g, cs = score(g, cut, prev, pin), best = cur, bs = cs;
   for (let i = 0; i < iters; i++) {
     const h = cur.map(r => r.slice());
     if (Math.random() < 0.6) {
@@ -194,7 +230,7 @@ function polish(g, cut, prev, iters = 70000) {
       if (!ok) continue;
       for (let j = 0; j < L; j++) { const r = h[t1 + j]; [r[x], r[y]] = [r[y], r[x]]; }
     }
-    const temp = 60 * Math.pow(0.05 / 60, i / iters), hs = score(h, cut, prev);
+    const temp = 60 * Math.pow(0.05 / 60, i / iters), hs = score(h, cut, prev, pin);
     if (hs <= cs || Math.random() < Math.exp((cs - hs) / temp)) {
       cur = h; cs = hs;
       if (cs < bs) { best = cur; bs = cs; }
@@ -233,7 +269,15 @@ function stretches(n, guy) {
   return segs;
 }
 const jobsText = x => 'Job ' + x.jobs.map(k => k + 1).join(' → ');
-const label = name => (name.startsWith('Unlucky') ? '😬 ' : name.startsWith('Lucky') ? '🍀 ' : '') + name;
+// 😬 works more than most of the crew, 🍀 less (the template slots are already called Unlucky / Lucky)
+function label(n, i) {
+  const name = n.roles[i];
+  if (/^(Unlucky|Lucky)/.test(name)) return (name.startsWith('Unlucky') ? '😬 ' : '🍀 ') + name;
+  const w = n.roles.map((_, k) => workOf(n, k)), counts = {};
+  w.forEach(x => { counts[x] = (counts[x] || 0) + 1; });
+  const most = +Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a - b)[0];
+  return (w[i] > most ? '😬 ' : w[i] < most ? '🍀 ' : '') + name;
+}
 const workOf = (n, guy) => n.grid.reduce((a, r) => a + (r.includes(guy) ? 1 : 0), 0) * 30;
 
 // ---------- sharing ----------
@@ -243,7 +287,7 @@ function rotaText(n) {
   const running = activeJobs(n, clamp(cutNow(n), 0, S - 1)).length;
   let s = `🔥 Rota · ${plural(n.changed ? running : n.j0, 'job')} · 19:00–07:00\n\n`;
   n.roles.forEach((name, i) => {
-    s += `• ${label(name)} (${dur(workOf(n, i))}): ${stretches(n, i).map(x => `${at(x.start)}–${at(x.end)} ${jobsText(x)}`).join(', ')}\n`;
+    s += `• ${label(n, i)} (${dur(workOf(n, i))}): ${stretches(n, i).map(x => `${at(x.start)}–${at(x.end)} ${jobsText(x)}`).join(', ')}\n`;
   });
   if (!n.changed && NOTES[n.j0]) s += `\n${NOTES[n.j0]}\n`;
   return s + `\n👉 ${crewUrl()}`;
@@ -419,7 +463,7 @@ function render() {
 
   h += '<div class="card"><h2>19:00–07:00</h2><div class="people">' + n.roles.map((name, i) => {
     const work = workOf(n, i);
-    return `<div class="pp"><div class="pp-top"><span class="tag" style="--c:${COLORS[i]}">${esc(label(name))}</span></div>
+    return `<div class="pp"><div class="pp-top"><span class="tag" style="--c:${COLORS[i]}">${esc(label(n, i))}</span></div>
       <div class="wt">🔨 <b>${dur(work)}</b> · ☕ <b>${dur(S * 30 - work)}</b></div>
       <div class="pp-segs">${stretches(n, i).map(x =>
         `<div class="${now >= x.start && now < x.end ? 'now' : ''}">${at(x.start)}–${at(x.end)} <span class="mut">${jobsText(x)}</span></div>`).join('')
